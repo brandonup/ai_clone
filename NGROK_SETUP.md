@@ -16,12 +16,12 @@ The AI Coach app is currently accessible at:
 
 **https://9ca4-97-115-137-157.ngrok-free.app**
 
-This URL forwards to your locally running Flask application on port 5005.
+This URL forwards to your locally running Flask application on port 5006.
 
 ## How to Use
 
-1. Make sure your Flask application is running on port 5005
-2. Make sure the ngrok tunnel is active (run `ngrok http 5005` if it's not)
+1. Make sure your Flask application is running on port 5006
+2. Make sure the ngrok tunnel is active (run `ngrok http 5006` if it's not)
 3. Share the ngrok URL with anyone who needs to access your application
 4. They can use the application as if it were deployed on the internet
 
@@ -29,14 +29,14 @@ This URL forwards to your locally running Flask application on port 5005.
 
 - The free version of ngrok will generate a new URL each time you restart the tunnel
 - The tunnel will close if you shut down your computer or terminate the ngrok process
-- If you need to restart the tunnel, run `ngrok http 5005` again and update this document with the new URL
+- If you need to restart the tunnel, run `ngrok http 5006` again and update this document with the new URL
 
 ## Starting Ngrok
 
 If the tunnel is not active, you can start it with:
 
 ```bash
-ngrok http 5005
+ngrok http 5006
 ```
 
 ## Checking Tunnel Status

@@ -296,4 +296,4 @@ def ask():
     return render_template('chat_interface.html', conversation_history=conversation_history)
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5005)
+    app.run(debug=True, host='0.0.0.0', port=5006)

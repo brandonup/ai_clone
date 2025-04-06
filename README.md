@@ -71,8 +71,8 @@ ai_coach_app/
    python app.py
    ```
 6. Access the application:
-   - Owner Dashboard: http://localhost:8080/owner
-   - Chat Interface: http://localhost:8080/chat
+   - Owner Dashboard: http://localhost:5006/owner
+   - Chat Interface: http://localhost:5006/chat
 
 ## Remote Access with Ngrok
 
@@ -81,7 +81,7 @@ To make your locally running application accessible from any network:
 1. Install ngrok if you haven't already: https://ngrok.com/download
 2. Start the ngrok tunnel to your Flask app:
    ```
-   ngrok http 8080
+   ngrok http 5006
    ```
 3. Share the generated ngrok URL with anyone who needs to access your application
 
