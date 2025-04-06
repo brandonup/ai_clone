@@ -153,15 +153,14 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
         # Create a complete prompt composition that includes both system message and user question
         # Format it with clear separators to make it easy to read
         from utils.ragie_utils import sanitize_text
-        prompt_composition = f"""
+        prompt_composition = """
 === SYSTEM MESSAGE ===
 
-{sanitize_text(system_content)}
+""" + sanitize_text(system_content) + """
 
 === USER QUESTION ===
 
-{question}
-"""
+""" + question
         return response_text.strip(), prompt_composition
     except Exception as e:
         logger.error(f"Error generating answer: {str(e)}")
@@ -330,15 +329,14 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                             )
                             
                             from utils.ragie_utils import sanitize_text
-                            prompt_composition = f"""
+                            prompt_composition = """
 === SYSTEM MESSAGE ===
 
-{sanitize_text(system_content)}
+""" + sanitize_text(system_content) + """
 
 === USER QUESTION ===
 
-{question}
-"""
+""" + question
                             return response_text.strip(), prompt_composition
                         except Exception as final_error:
                             logger.error(f"Error in second retry attempt: {str(final_error)}")
@@ -386,15 +384,14 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                             )
                             
                             from utils.ragie_utils import sanitize_text
-                            prompt_composition = f"""
+                            prompt_composition = """
 === SYSTEM MESSAGE ===
 
-{sanitize_text(system_content)}
+""" + sanitize_text(system_content) + """
 
 === USER QUESTION ===
 
-{question}
-"""
+""" + question
                             return response_text.strip() + "\n\n(Note: Answer generated without context due to token limitations)", prompt_composition
         
         # Re-raise the original error if it wasn't a token limit issue
