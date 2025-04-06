@@ -23,11 +23,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import utility modules
-from utils.ragie_utils import ingest_document, retrieve_chunks
 from utils.router import choose_route, generate_persona_patterns
 from utils.router import persona_rag_patterns, persona_base_llm_patterns
 from utils.llm_orchestrator import generate_answer, web_search
 from utils.google_drive_utils import process_drive_folder
+
+# Determine which RAG implementation to use
+use_custom_rag = os.getenv("USE_CUSTOM_RAG", "false").lower() == "true"
+if use_custom_rag:
+    logger.info("Using custom RAG implementation with Small-to-Big chunking and sliding window")
+    from utils.custom_rag_utils import ingest_document, retrieve_chunks
+else:
+    logger.info("Using Ragie.ai RAG implementation")
+    from utils.ragie_utils import ingest_document, retrieve_chunks
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -93,8 +101,8 @@ def owner_dashboard():
         # Get Google Drive folder link (optional)
         drive_folder_url = request.form.get('drive_folder')
         
-        # Only process Google Drive folder if a URL is provided
-        if drive_folder_url:
+        # Only process Google Drive folder if a URL is provided and not empty
+        if drive_folder_url and drive_folder_url.strip():
             try:
                 # Process Google Drive folder
                 app.logger.info(f"Processing Google Drive folder: {drive_folder_url}")
@@ -104,13 +112,13 @@ def owner_dashboard():
                     app.logger.warning("No supported files found in the Google Drive folder")
                     flash('No supported files found in the Google Drive folder, but setup will continue.')
                 else:
-                    # Ingest each file to Ragie
+                    # Ingest each file
                     for file in files:
                         try:
                             file_name = file.get('name')
                             file_content = file.get('content')
                             
-                            # Ingest document to Ragie
+                            # Ingest document
                             response = ingest_document(file_content, file_name)
                             
                             # Check response (optional)

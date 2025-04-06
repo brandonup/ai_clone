@@ -7,6 +7,7 @@ This is an AI coaching application built with Flask, LangChain, and Ragie.ai. Th
 - **Owner Dashboard**: Upload coaching documents and define the coach's persona
 - **User Chat Interface**: Ask questions to the AI coach and receive personalized responses
 - **Advanced RAG System**: 
+  - **NEW**: Custom RAG implementation with Small-to-Big chunking and sliding window (see [CUSTOM_RAG.md](CUSTOM_RAG.md))
   - Optimized for token efficiency to handle large documents
   - Implements a RAG-first approach that prioritizes knowledge base retrieval
   - Includes fallback mechanisms for when token limits are exceeded
@@ -27,8 +28,12 @@ ai_coach_app/
 ├── app.py                   # Flask application setup and route definitions  
 ├── requirements.txt         # Python dependencies  
 ├── .env.template            # Template for environment variables  
+├── CUSTOM_RAG.md            # Documentation for custom RAG implementation
+├── NGROK_SETUP.md           # Instructions for setting up ngrok
+├── SERPAPI_SETUP.md         # Instructions for setting up SerpAPI
 ├── utils/                   # Utility modules for organization  
 │   ├── ragie_utils.py       # Functions to ingest documents and retrieve data via Ragie  
+│   ├── custom_rag_utils.py  # Custom RAG implementation with Small-to-Big chunking
 │   ├── router.py            # Routing logic to decide Ragie vs Web vs Base LLM  
 │   └── llm_orchestrator.py  # LangChain/LLM integration (prompt assembly & calls)  
 ├── templates/               # HTML templates for Flask  
@@ -52,6 +57,11 @@ ai_coach_app/
    RAGIE_API_KEY=your-ragie-key
    SERPAPI_API_KEY=your-serpapi-key
    FLASK_SECRET_KEY=your-flask-secret-key
+   
+   # Custom RAG Configuration (optional)
+   USE_CUSTOM_RAG=true
+   QDRANT_URL=your-qdrant-url  # Optional, uses in-memory Qdrant if not provided
+   QDRANT_API_KEY=your-qdrant-api-key  # Optional
    ```
 4. Set up SerpAPI for web search functionality:
    - See [SERPAPI_SETUP.md](SERPAPI_SETUP.md) for detailed instructions
@@ -129,8 +139,9 @@ If you see a message about token limitations:
 
 - **Flask**: Web framework for the application
 - **LangChain**: For orchestrating LLM interactions
-- **OpenAI API**: For generating responses
+- **OpenAI API**: For generating responses and embeddings
 - **Ragie.ai**: For document ingestion and semantic search
+- **Qdrant**: Vector database for custom RAG implementation
 - **SerpAPI**: For web search capabilities
 
 ## License
