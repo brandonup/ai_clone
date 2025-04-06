@@ -1,0 +1,219 @@
+"""
+Utility functions for interacting with Google Drive API
+"""
+import os
+import io
+import re
+import logging
+import tempfile
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+from google.oauth2 import service_account
+from urllib.parse import urlparse, parse_qs
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def extract_folder_id_from_url(url):
+    """
+    Extract the folder ID from a Google Drive URL
+    
+    Args:
+        url: Google Drive folder URL
+        
+    Returns:
+        str: Folder ID or None if not found
+    """
+    # Handle different URL formats
+    parsed_url = urlparse(url)
+    
+    # Format: https://drive.google.com/drive/folders/FOLDER_ID
+    if 'drive.google.com/drive/folders' in url:
+        path_parts = parsed_url.path.split('/')
+        for i, part in enumerate(path_parts):
+            if part == 'folders' and i + 1 < len(path_parts):
+                return path_parts[i + 1]
+    
+    # Format: https://drive.google.com/open?id=FOLDER_ID
+    elif 'drive.google.com/open' in url:
+        query_params = parse_qs(parsed_url.query)
+        if 'id' in query_params:
+            return query_params['id'][0]
+    
+    # Format: https://drive.google.com/drive/u/0/folders/FOLDER_ID
+    elif re.search(r'drive\.google\.com/drive/u/\d+/folders', url):
+        path_parts = parsed_url.path.split('/')
+        for i, part in enumerate(path_parts):
+            if part == 'folders' and i + 1 < len(path_parts):
+                return path_parts[i + 1]
+    
+    # Format: https://drive.google.com/drive/shared-with-me/FOLDER_ID
+    elif 'drive.google.com/drive/shared-with-me' in url:
+        path_parts = parsed_url.path.split('/')
+        if len(path_parts) > 3:
+            return path_parts[-1]
+    
+    # Direct folder ID
+    elif re.match(r'^[A-Za-z0-9_-]{25,}$', url.strip()):
+        return url.strip()
+    
+    logger.error(f"Could not extract folder ID from URL: {url}")
+    return None
+
+def get_drive_service():
+    """
+    Create and return a Google Drive service object
+    
+    Returns:
+        googleapiclient.discovery.Resource: Google Drive service object
+    """
+    # Check if credentials file exists
+    creds_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'credentials.json')
+    
+    if not os.path.exists(creds_file):
+        logger.error("Google Drive credentials file not found")
+        raise FileNotFoundError("Google Drive credentials file not found. Please add credentials.json to the application directory.")
+    
+    # Create credentials from service account file
+    credentials = service_account.Credentials.from_service_account_file(
+        creds_file, scopes=['https://www.googleapis.com/auth/drive.readonly']
+    )
+    
+    # Build the Drive service
+    service = build('drive', 'v3', credentials=credentials)
+    return service
+
+def list_files_in_folder(folder_id):
+    """
+    List all files in a Google Drive folder
+    
+    Args:
+        folder_id: Google Drive folder ID
+        
+    Returns:
+        list: List of file metadata dictionaries
+    """
+    try:
+        service = get_drive_service()
+        
+        # Query for files in the folder
+        query = f"'{folder_id}' in parents and trashed = false"
+        results = service.files().list(
+            q=query,
+            fields="files(id, name, mimeType)",
+            pageSize=100
+        ).execute()
+        
+        files = results.get('files', [])
+        logger.info(f"Found {len(files)} files in Google Drive folder {folder_id}")
+        
+        # Filter for document types we can process
+        supported_mimetypes = [
+            'text/plain',
+            'application/pdf',
+            'application/vnd.google-apps.document',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/msword'
+        ]
+        
+        document_files = [
+            f for f in files 
+            if f.get('mimeType') in supported_mimetypes or f.get('name', '').endswith(('.txt', '.pdf', '.doc', '.docx'))
+        ]
+        
+        logger.info(f"Found {len(document_files)} document files in Google Drive folder {folder_id}")
+        return document_files
+        
+    except Exception as e:
+        logger.error(f"Error listing files in Google Drive folder: {str(e)}")
+        raise
+
+def download_file(file_id, file_name):
+    """
+    Download a file from Google Drive
+    
+    Args:
+        file_id: Google Drive file ID
+        file_name: Name to save the file as
+        
+    Returns:
+        bytes: File content as bytes
+    """
+    try:
+        service = get_drive_service()
+        
+        # Get file metadata to determine export method
+        file_metadata = service.files().get(fileId=file_id, fields='mimeType').execute()
+        mime_type = file_metadata.get('mimeType', '')
+        
+        # For Google Docs, we need to export them
+        if mime_type == 'application/vnd.google-apps.document':
+            response = service.files().export(
+                fileId=file_id,
+                mimeType='application/pdf'
+            ).execute()
+            content = response
+            
+        # For regular files, we can download directly
+        else:
+            request = service.files().get_media(fileId=file_id)
+            file_content = io.BytesIO()
+            downloader = MediaIoBaseDownload(file_content, request)
+            
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+                logger.info(f"Download {int(status.progress() * 100)}% complete for {file_name}")
+            
+            content = file_content.getvalue()
+        
+        logger.info(f"Successfully downloaded {file_name} from Google Drive")
+        return content
+        
+    except Exception as e:
+        logger.error(f"Error downloading file from Google Drive: {str(e)}")
+        raise
+
+def process_drive_folder(folder_url):
+    """
+    Process all files in a Google Drive folder
+    
+    Args:
+        folder_url: Google Drive folder URL
+        
+    Returns:
+        list: List of dictionaries with file name and content
+    """
+    # Extract folder ID from URL
+    folder_id = extract_folder_id_from_url(folder_url)
+    if not folder_id:
+        raise ValueError(f"Invalid Google Drive folder URL: {folder_url}")
+    
+    # List files in the folder
+    files = list_files_in_folder(folder_id)
+    if not files:
+        logger.warning(f"No supported files found in Google Drive folder: {folder_url}")
+        return []
+    
+    # Download each file
+    downloaded_files = []
+    for file in files:
+        try:
+            file_id = file.get('id')
+            file_name = file.get('name')
+            
+            # Download file content
+            content = download_file(file_id, file_name)
+            
+            downloaded_files.append({
+                'name': file_name,
+                'content': content
+            })
+            
+        except Exception as e:
+            logger.error(f"Error processing file {file.get('name')}: {str(e)}")
+            # Continue with other files
+    
+    logger.info(f"Successfully processed {len(downloaded_files)} files from Google Drive folder")
+    return downloaded_files

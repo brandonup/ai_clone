@@ -1,0 +1,226 @@
+"""
+Router module for deciding how to answer user queries
+"""
+import re
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def choose_route(question, ragie_chunks):
+    """
+    Determine the appropriate route for answering a question
+    using a smart routing approach that prioritizes time-sensitive queries
+    
+    Args:
+        question: User question
+        ragie_chunks: List of chunks retrieved from Ragie
+        
+    Returns:
+        str: Route choice - "ragie", "force_ragie", "web", or "base"
+    """
+    # Normalize question for analysis
+    q_lower = question.lower().strip()
+    
+    # Special case for weather queries - always use web search
+    if is_weather_query(q_lower):
+        logger.info("Routing to 'web' because this is a weather query")
+        return "web"
+    
+    # Check if this is a time-sensitive query
+    if check_time_sensitive_patterns(q_lower):
+        # For time-sensitive queries, only use RAG if highly relevant
+        if ragie_chunks and is_highly_relevant(question, ragie_chunks):
+            logger.info("Routing to 'ragie' because chunks are highly relevant for this time-sensitive query")
+            return "ragie"
+        else:
+            logger.info("Routing to 'web' because this is a time-sensitive query")
+            return "web"
+    
+    # For non-time-sensitive queries, use existing logic
+    if ragie_chunks:
+        logger.info("Routing to 'ragie' because chunks were found")
+        return "ragie"
+    
+    # Check for base LLM indicators (questions that don't need external knowledge)
+    base_llm_patterns = [
+        # General advice or opinion questions
+        r'^(what (do|would) you|how (do|would|can) you)',
+        r'^(can you|could you) (help|advise|suggest)',
+        
+        # Hypothetical scenarios
+        r'(if|imagine|suppose|what if)',
+        
+        # Personal coaching questions
+        r'(how (can|should) i|what (can|should) i)',
+        r'(advice|suggestion|tip|help) (for|with|on)',
+        
+        # Simple factual questions that a general LLM should know
+        r'^(what is|who is|how does) (a|an|the)',
+    ]
+    
+    # Check if any base LLM patterns match
+    for pattern in base_llm_patterns:
+        if re.search(pattern, q_lower):
+            logger.info(f"Routing to 'base' because pattern matched: {pattern}")
+            return "base"
+    
+    # Default to trying RAG again with a modified query
+    # This implements the advanced RAG optimization approach
+    logger.info(f"Routing to 'force_ragie' as default")
+    return "force_ragie"
+
+def is_weather_query(q_lower):
+    """
+    Determine if a query is specifically about weather
+    
+    Args:
+        q_lower: Lowercase question
+        
+    Returns:
+        bool: True if it's a weather query
+    """
+    weather_terms = ["weather", "forecast", "temperature", "rain", "snow", "sunny", "cloudy", 
+                     "humidity", "precipitation", "hot", "cold", "warm", "chilly", "freezing"]
+    location_pattern = r'\b(in|at|for|near) ([A-Za-z\s,]+)(\.|\?|$)'
+    
+    # Check if it contains weather terms
+    has_weather_term = any(term in q_lower for term in weather_terms)
+    
+    # Check if it contains a location
+    has_location = re.search(location_pattern, q_lower) is not None
+    
+    # Additional check for common weather question formats
+    weather_patterns = [
+        r"what('s| is) the weather (like |going to be |forecast |)",
+        r"(will|is) it (rain|snow|be sunny|be cloudy)",
+        r"(how|what)('s| is) the temperature",
+    ]
+    
+    matches_weather_pattern = any(re.search(pattern, q_lower) for pattern in weather_patterns)
+    
+    # Return true if it has a weather term AND (has a location OR matches a weather pattern)
+    return has_weather_term and (has_location or matches_weather_pattern)
+
+def check_time_sensitive_patterns(q_lower):
+    """
+    Check if a query is time-sensitive or requires current information
+    
+    Args:
+        q_lower: Lowercase question
+        
+    Returns:
+        bool: True if it's time-sensitive
+    """
+    # Enhanced patterns for time-sensitive queries
+    time_sensitive_patterns = [
+        # Time indicators (high priority)
+        r'\b(today|tomorrow|yesterday|tonight|this morning|this afternoon|this evening)\b',
+        r'\b(current|latest|recent|now|right now|at the moment)\b',
+        r'\b(this week|this month|this year|next week|next month|next year)\b',
+        
+        # News and events
+        r'\b(news|headline|breaking|update|development|announcement)\b',
+        r'\b(happened|occurring|taking place|going on|event)\b',
+        
+        # Sports and entertainment
+        r'\b(score|game|match|playing|showing|performance|concert)\b',
+        
+        # Market information
+        r'\b(stock price|market|rate|trading at|exchange rate)\b',
+        
+        # Specific dates that suggest current information
+        r'\b(in 2024|in 2025|2024|2025)\b',
+        
+        # Questions about protests, events, or incidents
+        r'\b(protest|event|incident|happening|occurred)\b',
+    ]
+    
+    for pattern in time_sensitive_patterns:
+        if re.search(pattern, q_lower):
+            logger.info(f"Time-sensitive pattern matched: {pattern}")
+            return True
+            
+    return False
+
+def is_highly_relevant(question, chunks):
+    """
+    Determine if the RAG chunks are highly relevant to the question
+    
+    Args:
+        question: User question
+        chunks: List of text chunks from RAG
+        
+    Returns:
+        bool: True if chunks are highly relevant
+    """
+    # Extract key terms from the question
+    key_terms = extract_key_terms(question)
+    logger.info(f"Key terms extracted: {key_terms}")
+    
+    # Count how many chunks contain the key terms
+    relevant_chunks = 0
+    for chunk in chunks:
+        if contains_key_terms(chunk, key_terms):
+            relevant_chunks += 1
+    
+    relevance_score = relevant_chunks / len(chunks) if chunks else 0
+    logger.info(f"Relevance score: {relevance_score} ({relevant_chunks}/{len(chunks)} chunks relevant)")
+    
+    # If more than 50% of chunks are relevant, consider it highly relevant
+    return relevance_score > 0.5
+
+def extract_key_terms(question):
+    """
+    Extract important terms from the question
+    
+    Args:
+        question: User question
+        
+    Returns:
+        list: List of key terms
+    """
+    q_lower = question.lower()
+    
+    # Remove common stop words
+    stop_words = ["what", "where", "when", "how", "why", "is", "are", "the", "a", "an", "in", 
+                 "on", "at", "to", "for", "with", "about", "like", "going", "be", "will", 
+                 "can", "could", "would", "should", "do", "does", "did", "has", "have", "had"]
+    
+    for word in stop_words:
+        q_lower = q_lower.replace(f" {word} ", " ")
+    
+    # Split into words and filter out short words
+    terms = [word for word in q_lower.split() if len(word) > 3]
+    
+    # Remove duplicates while preserving order
+    unique_terms = []
+    for term in terms:
+        if term not in unique_terms:
+            unique_terms.append(term)
+    
+    return unique_terms
+
+def contains_key_terms(chunk, key_terms):
+    """
+    Check if a chunk contains enough key terms to be considered relevant
+    
+    Args:
+        chunk: Text chunk from RAG
+        key_terms: List of key terms from the question
+        
+    Returns:
+        bool: True if chunk contains enough key terms
+    """
+    chunk_lower = chunk.lower()
+    matches = 0
+    
+    for term in key_terms:
+        if term in chunk_lower:
+            matches += 1
+    
+    # Require at least 2 key terms or 30% of the terms, whichever is less
+    min_required = min(2, max(1, int(len(key_terms) * 0.3)))
+    
+    return matches >= min_required

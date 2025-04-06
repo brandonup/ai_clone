@@ -1,0 +1,12 @@
+flask
+openai
+langchain>=0.1.0
+langchain-openai>=0.1.0
+python-dotenv
+requests
+ragie
+langchain-ragie
+google-api-python-client
+google-auth
+tiktoken
+langchain-community

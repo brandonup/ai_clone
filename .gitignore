@@ -1,0 +1,32 @@
+# Environment variables and secrets
+.env
+.env.template
+credentials.json
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Logs
+*.log
+app_debug.log
+error.log
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Large data files
+documents/
+
+# Zip files
+*.zip
+
+# Debug files
+*.db
