@@ -324,16 +324,63 @@ class QdrantStore:
         Returns:
             List[List[float]]: List of embeddings
         """
-        # Generate embeddings
-        response = self.openai_client.embeddings.create(
-            model="text-embedding-ada-002",
-            input=texts
-        )
+        # Handle rate limits by processing in batches
+        batch_size = 100  # Process 100 texts at a time to avoid rate limits
+        all_embeddings = []
         
-        # Extract embeddings
-        embeddings = [item.embedding for item in response.data]
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i:i+batch_size]
+            
+            try:
+                # Generate embeddings for this batch
+                logger.info(f"Generating embeddings for batch {i//batch_size + 1}/{(len(texts)-1)//batch_size + 1}")
+                response = self.openai_client.embeddings.create(
+                    model="text-embedding-ada-002",
+                    input=batch_texts
+                )
+                
+                # Extract embeddings
+                batch_embeddings = [item.embedding for item in response.data]
+                all_embeddings.extend(batch_embeddings)
+                
+                # Sleep briefly to avoid hitting rate limits
+                if i + batch_size < len(texts):
+                    import time
+                    time.sleep(0.5)  # 500ms pause between batches
+                    
+            except Exception as e:
+                logger.error(f"Error generating embeddings for batch {i//batch_size + 1}: {str(e)}")
+                # If we hit a rate limit, wait longer and retry
+                if "rate_limit_exceeded" in str(e):
+                    logger.info("Rate limit exceeded, waiting 60 seconds before retrying...")
+                    import time
+                    time.sleep(60)
+                    
+                    # Retry with a smaller batch
+                    smaller_batch_size = batch_size // 2
+                    for j in range(i, min(i+batch_size, len(texts)), smaller_batch_size):
+                        sub_batch = texts[j:j+smaller_batch_size]
+                        try:
+                            logger.info(f"Retrying with smaller batch of {len(sub_batch)} texts")
+                            response = self.openai_client.embeddings.create(
+                                model="text-embedding-ada-002",
+                                input=sub_batch
+                            )
+                            sub_batch_embeddings = [item.embedding for item in response.data]
+                            all_embeddings.extend(sub_batch_embeddings)
+                            time.sleep(1)  # Longer pause between retries
+                        except Exception as sub_e:
+                            logger.error(f"Error in retry batch: {str(sub_e)}")
+                            # For each text that fails, use a zero vector as placeholder
+                            # This allows processing to continue even if some embeddings fail
+                            for _ in range(len(sub_batch)):
+                                all_embeddings.append([0.0] * EMBEDDING_DIMENSION)
+                else:
+                    # For non-rate-limit errors, use zero vectors as placeholders
+                    for _ in range(len(batch_texts)):
+                        all_embeddings.append([0.0] * EMBEDDING_DIMENSION)
         
-        return embeddings
+        return all_embeddings
     
     def store_document(self, processed_doc: Dict[str, Any]) -> None:
         """
@@ -460,13 +507,56 @@ def ingest_document(file_content: Union[str, bytes], filename: str) -> Dict[str,
         "title": filename,
     }
     
-    # Process document
-    processor = DocumentProcessor()
-    processed_doc = processor.process_document(file_content, metadata)
-    
-    # Store document
-    store = QdrantStore()
-    store.store_document(processed_doc)
+    # For very large documents, we need to break them into manageable chunks
+    # to avoid memory issues and rate limits
+    try:
+        # Convert to string if bytes
+        if isinstance(file_content, bytes):
+            text = file_content.decode('utf-8', errors='replace')
+        else:
+            text = file_content
+        
+        # Check if the document is very large (rough estimate)
+        # A typical large PDF might be several MB of text
+        if len(text) > 1000000:  # More than ~1MB of text
+            logger.info(f"Large document detected ({len(text)} chars). Processing in sections.")
+            
+            # Break into major sections (roughly 500KB each)
+            section_size = 500000  # ~500KB per section
+            sections = [text[i:i+section_size] for i in range(0, len(text), section_size)]
+            
+            logger.info(f"Document split into {len(sections)} sections for processing")
+            
+            # Process each section separately
+            processor = DocumentProcessor()
+            store = QdrantStore()
+            
+            for i, section in enumerate(sections):
+                section_metadata = metadata.copy()
+                section_metadata["section"] = i
+                
+                logger.info(f"Processing section {i+1}/{len(sections)}")
+                processed_section = processor.process_document(section, section_metadata)
+                
+                logger.info(f"Storing section {i+1}/{len(sections)}")
+                store.store_document(processed_section)
+                
+                # Sleep between sections to avoid rate limits
+                if i < len(sections) - 1:
+                    import time
+                    time.sleep(2)  # 2 second pause between sections
+        else:
+            # Process document normally
+            processor = DocumentProcessor()
+            processed_doc = processor.process_document(file_content, metadata)
+            
+            # Store document
+            store = QdrantStore()
+            store.store_document(processed_doc)
+    except Exception as e:
+        logger.error(f"Error processing document: {str(e)}")
+        # Re-raise with more context
+        raise Exception(f"Error processing document {filename}: {str(e)}")
     
     # Store a local copy of the document for fallback
     try:
