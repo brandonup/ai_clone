@@ -57,6 +57,8 @@ Set to `true` to use the custom RAG implementation, or `false` to use the origin
 2. **Better Context Understanding**: Large chunks provide the LLM with more context
 3. **No Information Loss**: Sliding window ensures information isn't lost at chunk boundaries
 4. **Fallback Mechanism**: Falls back to keyword search if vector search returns no results
+5. **Rate Limit Handling**: Processes embeddings in batches with automatic retries to avoid OpenAI rate limits
+6. **Large Document Support**: Automatically splits very large documents into manageable sections for processing
 
 ## Google Drive Integration
 
