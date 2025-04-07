@@ -216,12 +216,25 @@ def sanitize_text(text):
             logger.error(f"Error converting to string: {str(e)}")
             return "[Data could not be converted to string]"
     
+    # Check for binary data or non-printable characters
+    # This is a more aggressive check that will catch any text with a high percentage of non-printable characters
+    total_chars = len(text)
+    if total_chars == 0:
+        return ""
+        
+    printable_chars = sum(1 for c in text if c.isprintable() or c in '\n\r\t')
+    printable_ratio = printable_chars / total_chars
+    
+    # If less than 80% of characters are printable, consider it binary data
+    if printable_ratio < 0.8:
+        logger.warning(f"Detected binary data (printable ratio: {printable_ratio:.2f})")
+        return "[Binary data detected and removed]"
+    
     # Check for PDF artifacts
     import re
     
-    # Expanded list of PDF-specific markers and binary data patterns
+    # Expanded list of PDF-specific markers
     pdf_patterns = [
-        # Original patterns
         r'endstream\s*endobj',
         r'\d+\s+\d+\s+obj\s*<<.*?>>',
         r'<<.*?>>',
@@ -240,7 +253,6 @@ def sanitize_text(text):
         r'/Predictor \d+',
         r'/Columns \d+',
         r'/DecodeParms',
-        # Additional PDF markers
         r'/FontDescriptor',
         r'/FontFile[23]?',
         r'/XObject',
@@ -263,16 +275,33 @@ def sanitize_text(text):
         r'/Pages',
         r'/Page',
         r'/Catalog',
-        # Binary data patterns
-        r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\xFF]{4,}',
-        r'(\x00){2,}',
     ]
     
-    # More aggressive detection of binary PDF data
+    # Check for PDF markers
     pdf_marker_count = sum(1 for pattern in pdf_patterns if re.search(pattern, text))
-    if pdf_marker_count >= 2:  # Lowered threshold from 3 to 2 for more aggressive detection
-        logger.warning(f"Detected PDF binary data with {pdf_marker_count} markers")
-        return "[PDF binary data detected and removed]"
+    # Increased threshold from 3 to 5 to reduce false positives
+    if pdf_marker_count >= 5: 
+        logger.warning(f"Detected PDF markers ({pdf_marker_count} markers)")
+        return "[PDF content detected and removed]"
+    
+    # Check for random character patterns that might indicate binary data
+    # This pattern looks for text that has a high ratio of special characters to alphanumeric characters
+    special_chars = sum(1 for c in text if not c.isalnum() and c not in ' \n\r\t.,;:!?()[]{}"\'-_')
+    alpha_chars = sum(1 for c in text if c.isalnum())
+    
+    if alpha_chars > 0:
+        special_ratio = special_chars / alpha_chars
+        if special_ratio > 0.5:  # If more than 50% of non-space characters are special characters
+            logger.warning(f"Detected unusual character distribution (special ratio: {special_ratio:.2f})")
+            return "[Content with unusual character distribution removed]"
+    
+    # Check for random character sequences (like the example provided by the user)
+    # This pattern looks for text with many short "words" separated by spaces
+    words = text.split()
+    short_words = sum(1 for word in words if len(word) <= 2)
+    if len(words) > 10 and short_words / len(words) > 0.5:
+        logger.warning(f"Detected random character sequence (short word ratio: {short_words/len(words):.2f})")
+        return "[Random character sequence detected and removed]"
     
     # Fix common OCR/PDF extraction issues
     text = text.replace("ﬂ", "fl")  # Replace ligatures
@@ -280,7 +309,7 @@ def sanitize_text(text):
     text = text.replace("iaweb", "Viaweb")  # Fix specific known issues
     text = text.replace("V iaweb", "Viaweb")
     
-    # Replace non-printable characters
+    # Replace any remaining non-printable characters
     text = re.sub(r'[^\x20-\x7E\n\r\t]', ' ', text)
     
     # Remove multiple spaces

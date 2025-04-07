@@ -30,3 +30,6 @@ documents/
 
 # Debug files
 *.db
+
+# Development specific files
+dev_config.json # Temporary config to bypass setup during development

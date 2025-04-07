@@ -11,3 +11,7 @@ google-auth
 tiktoken
 langchain-community
 qdrant-client
+spacy>=3.5.0
+sentence-transformers>=2.2.2
+pypdf
+python-docx

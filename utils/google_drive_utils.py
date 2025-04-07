@@ -114,13 +114,33 @@ def list_files_in_folder(folder_id):
             'application/pdf',
             'application/vnd.google-apps.document',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/msword'
+            'application/msword',
+            'application/vnd.google-apps.spreadsheet',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.ms-excel',
+            'application/vnd.google-apps.presentation',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.ms-powerpoint',
+            'text/csv',
+            'text/markdown',
+            'application/json',
+            'application/xml',
+            'text/html',
+            'text/javascript',
+            'application/javascript'
         ]
         
-        document_files = [
-            f for f in files 
-            if f.get('mimeType') in supported_mimetypes or f.get('name', '').endswith(('.txt', '.pdf', '.doc', '.docx'))
-        ]
+        # Log all files for debugging
+        for f in files:
+            logger.info(f"Found file: {f.get('name')} with MIME type: {f.get('mimeType')}")
+        
+        # Accept all files for now to debug the issue
+        document_files = files
+        
+        # Log the files we're going to process
+        logger.info(f"Will process the following files:")
+        for f in document_files:
+            logger.info(f"- {f.get('name')} ({f.get('mimeType')})")
         
         logger.info(f"Found {len(document_files)} document files in Google Drive folder {folder_id}")
         return document_files
@@ -175,12 +195,13 @@ def download_file(file_id, file_name):
         logger.error(f"Error downloading file from Google Drive: {str(e)}")
         raise
 
-def process_drive_folder(folder_url):
+def process_drive_folder(folder_url, max_depth=3):
     """
-    Process all files in a Google Drive folder
+    Process all files in a Google Drive folder, including nested folders
     
     Args:
         folder_url: Google Drive folder URL
+        max_depth: Maximum depth for recursive folder processing
         
     Returns:
         list: List of dictionaries with file name and content
@@ -190,10 +211,30 @@ def process_drive_folder(folder_url):
     if not folder_id:
         raise ValueError(f"Invalid Google Drive folder URL: {folder_url}")
     
+    # Process folder recursively
+    return process_folder_recursive(folder_id, "", max_depth)
+
+def process_folder_recursive(folder_id, path_prefix="", depth=0, max_depth=3):
+    """
+    Process a folder recursively
+    
+    Args:
+        folder_id: Google Drive folder ID
+        path_prefix: Prefix for file names to indicate folder structure
+        depth: Current recursion depth
+        max_depth: Maximum recursion depth
+        
+    Returns:
+        list: List of dictionaries with file name and content
+    """
+    if depth > max_depth:
+        logger.warning(f"Maximum recursion depth reached for folder {folder_id}")
+        return []
+    
     # List files in the folder
     files = list_files_in_folder(folder_id)
     if not files:
-        logger.warning(f"No supported files found in Google Drive folder: {folder_url}")
+        logger.warning(f"No files found in Google Drive folder: {folder_id}")
         return []
     
     # Download each file
@@ -202,18 +243,37 @@ def process_drive_folder(folder_url):
         try:
             file_id = file.get('id')
             file_name = file.get('name')
+            mime_type = file.get('mimeType')
             
-            # Download file content
-            content = download_file(file_id, file_name)
+            # If it's a folder, process it recursively
+            if mime_type == 'application/vnd.google-apps.folder':
+                logger.info(f"Processing nested folder: {file_name} ({file_id})")
+                nested_path = path_prefix + file_name + "/"
+                nested_files = process_folder_recursive(file_id, nested_path, depth + 1, max_depth)
+                downloaded_files.extend(nested_files)
+                continue
             
-            downloaded_files.append({
-                'name': file_name,
-                'content': content
-            })
+            # For regular files, download content
+            try:
+                logger.info(f"Downloading file: {file_name} ({mime_type})")
+                content = download_file(file_id, file_name)
+                
+                # Use path_prefix to create a hierarchical file name
+                prefixed_name = path_prefix + file_name
+                
+                downloaded_files.append({
+                    'name': prefixed_name,
+                    'content': content
+                })
+                logger.info(f"Successfully downloaded: {prefixed_name}")
+                
+            except Exception as download_e:
+                logger.error(f"Error downloading file {file_name}: {str(download_e)}")
+                # Continue with other files
             
         except Exception as e:
             logger.error(f"Error processing file {file.get('name')}: {str(e)}")
             # Continue with other files
     
-    logger.info(f"Successfully processed {len(downloaded_files)} files from Google Drive folder")
+    logger.info(f"Successfully processed {len(downloaded_files)} files from Google Drive folder {folder_id}")
     return downloaded_files

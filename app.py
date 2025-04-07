@@ -25,8 +25,11 @@ logger = logging.getLogger(__name__)
 # Import utility modules
 from utils.router import choose_route, generate_persona_patterns
 from utils.router import persona_rag_patterns, persona_base_llm_patterns
-from utils.llm_orchestrator import generate_answer, web_search
+from utils.llm_orchestrator import generate_answer, web_search, get_llm_for_entity_extraction
 from utils.google_drive_utils import process_drive_folder
+from utils.conversation_storage import save_conversation, load_conversation
+from utils.memory_utils import ConversationBufferWindowMemory, format_conversation_history
+from utils.entity_memory import ConversationEntityMemory
 
 # Determine which RAG implementation to use
 use_custom_rag = os.getenv("USE_CUSTOM_RAG", "false").lower() == "true"
@@ -34,7 +37,7 @@ if use_custom_rag:
     logger.info("Using custom RAG implementation with Small-to-Big chunking and sliding window")
     from utils.custom_rag_utils import ingest_document, retrieve_chunks
 else:
-    logger.info("Using Ragie.ai RAG implementation")
+    logger.info("Using Ragie.ai implementation for RAG")
     from utils.ragie_utils import ingest_document, retrieve_chunks
 
 # Initialize Flask app
@@ -46,6 +49,41 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 # In a production app, these would be stored in a database
 coach_name = None
 coach_persona = None
+
+# --- Development Setup Bypass ---
+# Check for dev_config.json to bypass setup during development
+# Note: We only check for dev_config.json, not dev_config_off.json
+try:
+    # Construct the path relative to the app.py file
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    config_path = os.path.join(base_dir, 'dev_config.json')
+    
+    try:
+        with open(config_path, 'r') as f:
+            dev_config = json.load(f)
+            coach_name = dev_config.get("coach_name")
+            coach_persona = dev_config.get("coach_persona")
+            
+            if coach_name and coach_persona:
+                logger.warning("!!! Using coach name and persona from dev_config.json for development testing !!!")
+                
+                # If using dev config, also generate persona patterns immediately
+                try:
+                    logger.info(f"Generating persona-specific patterns for DEV config: {coach_name}")
+                    patterns = generate_persona_patterns(coach_name, coach_persona)
+                    persona_rag_patterns = patterns.get('rag_patterns', [])
+                    persona_base_llm_patterns = patterns.get('base_llm_patterns', [])
+                    logger.info(f"Generated {len(persona_rag_patterns)} RAG patterns and {len(persona_base_llm_patterns)} base LLM patterns for DEV config")
+                except Exception as e:
+                    logger.error(f"Error generating persona-specific patterns for DEV config: {str(e)}")
+                    persona_rag_patterns = []
+                    persona_base_llm_patterns = []
+    except FileNotFoundError:
+        logger.info("dev_config.json not found, proceeding with normal setup flow.")
+except Exception as e:
+    logger.error(f"Error reading or processing dev_config.json: {e}")
+# --- End Development Setup Bypass ---
+
 
 @app.route('/')
 def index():
@@ -156,6 +194,15 @@ def chat():
     if 'conversation_id' not in session:
         session['conversation_id'] = str(uuid.uuid4())
         session['conversation_history'] = []
+    else:
+        # Try to load conversation from disk
+        disk_history = load_conversation(session['conversation_id'])
+        if disk_history:
+            # Only keep the last 10 messages in session to keep cookie size manageable
+            if len(disk_history) > 10:
+                session['conversation_history'] = disk_history[-10:]
+            else:
+                session['conversation_history'] = disk_history
     
     return render_template('chat_interface.html', conversation_history=session.get('conversation_history', []))
 
@@ -208,13 +255,31 @@ def ask():
         # Initialize prompt_composition
         prompt_composition = None
         
-        if chunks and route == "ragie":
+        # Get conversation memory (last 5 interactions)
+        memory = ConversationBufferWindowMemory(k=5, conversation_id=session['conversation_id'])
+        conversation_history = format_conversation_history(memory.get_memory_variables()["history"])
+        
+        # Get entity memory
+        entity_memory = ConversationEntityMemory(
+            conversation_id=session['conversation_id'],
+            llm=get_llm_for_entity_extraction()
+        )
+        
+        if chunks and route == "rag":
             # Use RAG with retrieved chunks
             source = "Knowledge Base (RAG)"
             context = "\n\n".join(chunks)
-            answer, prompt_composition = generate_answer(question, context=context, coach_name=coach_name, persona=coach_persona, source=source)
+            answer, prompt_composition = generate_answer(
+                question, 
+                context=context, 
+                coach_name=coach_name, 
+                persona=coach_persona, 
+                source=source,
+                conversation_history=conversation_history,
+                entity_memory=entity_memory
+            )
             
-        elif route == "force_ragie":
+        elif route == "force_rag":
             # Try a more direct retrieval with modified query
             modified_question = f"Find information about: {question}"
             logger.info(f"Trying modified query: {modified_question}")
@@ -223,11 +288,26 @@ def ask():
             if chunks:
                 source = "Knowledge Base (RAG)"
                 context = "\n\n".join(chunks)
-                answer, prompt_composition = generate_answer(question, context=context, coach_name=coach_name, persona=coach_persona, source=source)
+                answer, prompt_composition = generate_answer(
+                    question, 
+                    context=context, 
+                    coach_name=coach_name, 
+                    persona=coach_persona, 
+                    source=source,
+                    conversation_history=conversation_history,
+                    entity_memory=entity_memory
+                )
             else:
                 # If no chunks found with modified query, use base LLM
                 source = "Base LLM (No Knowledge Found)"
-                answer, prompt_composition = generate_answer(question, coach_name=coach_name, persona=coach_persona, source=source)
+                answer, prompt_composition = generate_answer(
+                    question, 
+                    coach_name=coach_name, 
+                    persona=coach_persona, 
+                    source=source,
+                    conversation_history=conversation_history,
+                    entity_memory=entity_memory
+                )
                 
         elif route == "web":
             # Use web search for current information
@@ -241,7 +321,15 @@ def ask():
             
             if search_context:
                 source = "Web Search (Serper.dev)"
-                answer, prompt_composition = generate_answer(question, context=search_context, coach_name=coach_name, persona=coach_persona, source=source)
+                answer, prompt_composition = generate_answer(
+                    question, 
+                    context=search_context, 
+                    coach_name=coach_name, 
+                    persona=coach_persona, 
+                    source=source,
+                    conversation_history=conversation_history,
+                    entity_memory=entity_memory
+                )
                 logger.info("Web search successful, using results for answer")
             else:
                 # If web search fails, log detailed error and fall back to base LLM
@@ -250,7 +338,14 @@ def ask():
                 
                 # Add a note about the web search failure to the answer
                 source = "Base LLM (Web Search Failed)"
-                base_answer, prompt_composition = generate_answer(question, coach_name=coach_name, persona=coach_persona, source=source)
+                base_answer, prompt_composition = generate_answer(
+                    question, 
+                    coach_name=coach_name, 
+                    persona=coach_persona, 
+                    source=source,
+                    conversation_history=conversation_history,
+                    entity_memory=entity_memory
+                )
                 
                 # Add a note about the web search failure for time-sensitive questions
                 if any(term in question.lower() for term in ["today", "yesterday", "tomorrow", "weather", "current", "latest"]):
@@ -262,7 +357,14 @@ def ask():
             # Use base LLM for general knowledge questions
             logger.info(f"Using base LLM for question: {question}")
             source = "Base LLM"
-            answer, prompt_composition = generate_answer(question, coach_name=coach_name, persona=coach_persona, source=source)
+            answer, prompt_composition = generate_answer(
+                question, 
+                coach_name=coach_name, 
+                persona=coach_persona, 
+                source=source,
+                conversation_history=conversation_history,
+                entity_memory=entity_memory
+            )
         
     except Exception as e:
         error_msg = f"Error generating answer: {str(e)}"
@@ -277,23 +379,40 @@ def ask():
         source = "Error"
         prompt_composition = None
     
-    # Add the question and answer to the conversation history
-    conversation_history = session.get('conversation_history', [])
-    conversation_history.append({
+    # Load the full conversation history from disk (if it exists)
+    full_history = load_conversation(session['conversation_id'])
+    
+    # If no history found on disk, use what's in the session
+    if not full_history and 'conversation_history' in session:
+        full_history = session.get('conversation_history', [])
+    
+    # Add the new messages to the full history
+    full_history.append({
         'role': 'user',
         'content': question,
         'timestamp': timestamp
     })
-    conversation_history.append({
+    full_history.append({
         'role': 'assistant',
         'content': answer,
         'source': source,
-        'prompt_composition': prompt_composition,
+        'prompt_composition': prompt_composition,  # Store prompt_composition
         'timestamp': timestamp
     })
-    session['conversation_history'] = conversation_history
     
-    return render_template('chat_interface.html', conversation_history=conversation_history)
+    # Save the complete history to disk
+    save_conversation(session['conversation_id'], full_history)
+    
+    # Update entity memory with the new interaction
+    entity_memory.update_entity_from_interaction(question, answer)
+    
+    # For session, limit to last 10 messages to keep cookie size manageable
+    if len(full_history) > 10:
+        session['conversation_history'] = full_history[-10:]
+    else:
+        session['conversation_history'] = full_history
+    
+    return render_template('chat_interface.html', conversation_history=session['conversation_history'])
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5006)
+if __name__ == "__main__":
+    app.run(debug=True, port=5005, use_reloader=True)

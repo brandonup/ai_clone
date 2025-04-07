@@ -7,7 +7,24 @@ import logging
 import json
 import re
 import uuid
+import io # Added for handling bytes with python-docx
 from typing import List, Dict, Tuple, Any, Optional, Union
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Added imports for text extraction
+try:
+    from pypdf import PdfReader
+except ImportError:
+    logger.warning("pypdf not installed. PDF processing will not be available.")
+    PdfReader = None
+try:
+    import docx
+except ImportError:
+    logger.warning("python-docx not installed. DOCX processing will not be available.")
+    docx = None
 
 import tiktoken
 from qdrant_client import QdrantClient
@@ -15,10 +32,6 @@ from qdrant_client.http import models
 from qdrant_client.http.models import Distance, VectorParams, PointStruct
 from qdrant_client.models import Filter, FieldCondition, MatchValue
 import openai
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Constants
 LARGE_CHUNK_SIZE = 512  # tokens
@@ -86,9 +99,19 @@ class DocumentProcessor:
         Returns:
             str: Processed content
         """
+        # DIAGNOSTIC LOG: Log initial content type and snippet
+        logger.info(f"Preprocessing content of type: {type(content)}")
+        content_snippet = content[:200] if isinstance(content, str) else content[:200].decode('utf-8', errors='replace')
+        logger.info(f"Preprocessing content snippet (first 200 chars/bytes): {content_snippet}")
+
         # Convert to string if bytes
         if isinstance(content, bytes):
-            text = content.decode('utf-8', errors='replace')
+            try:
+                text = content.decode('utf-8', errors='strict') # Try strict decoding first
+                logger.info("Successfully decoded content as UTF-8 (strict)")
+            except UnicodeDecodeError:
+                logger.warning("UTF-8 strict decoding failed, falling back to 'replace' errors")
+                text = content.decode('utf-8', errors='replace')
         else:
             text = content
         
@@ -104,10 +127,11 @@ class DocumentProcessor:
         
         # Ensure paragraphs are properly separated
         text = re.sub(r'(\.\s+)([A-Z])', r'\1\n\2', text)
-        
+        # DIAGNOSTIC LOG: Log snippet after preprocessing
+        logger.info(f"Post-preprocessing snippet (first 200 chars): {text[:200]}")
         return text
-    
-    def create_chunks_with_sliding_window(self, 
+
+    def create_chunks_with_sliding_window(self,
                                           text: str, 
                                           chunk_size: int, 
                                           chunk_overlap: int) -> List[str]:
@@ -198,7 +222,12 @@ class DocumentProcessor:
             self.large_chunk_size, 
             self.large_chunk_overlap
         )
-        
+        # DIAGNOSTIC LOG: Log first large chunk if available
+        if large_chunks:
+            logger.info(f"First large chunk created (first 200 chars): {large_chunks[0][:200]}")
+        else:
+            logger.info("No large chunks created.")
+
         # Process large chunks
         processed_large_chunks = []
         all_small_chunks = []
@@ -242,15 +271,21 @@ class DocumentProcessor:
                     "chunk_type": "small",
                     "chunk_index": j,
                     "parent_id": large_chunk_id,
-                    "parent_text": large_chunk,
+                    "parent_text": large_chunk, # Storing potentially large text here
                 }
-                
+
                 # Add small chunk
                 all_small_chunks.append({
                     "text": small_chunk,
                     "metadata": small_chunk_metadata
                 })
-        
+
+            # DIAGNOSTIC LOG: Log first small chunk of the first large chunk
+            if i == 0 and small_chunks:
+                 logger.info(f"First small chunk created (from first large chunk, first 200 chars): {small_chunks[0][:200]}")
+            elif i == 0:
+                 logger.info("No small chunks created from the first large chunk.")
+
         # Return processed document
         return {
             "doc_id": metadata.get("doc_id", ""),
@@ -427,13 +462,66 @@ class QdrantStore:
             
             points.append(point)
         
-        # Upsert points
-        self.client.upsert(
-            collection_name=self.collection_name,
-            points=points
-        )
+        # Upsert points in batches to avoid payload size limits
+        batch_size = 100  # Process 100 points at a time to avoid payload size limits
+        total_points = len(points)
         
-        logger.info(f"Stored {len(points)} small chunks for document: {processed_doc['doc_id']}")
+        logger.info(f"Upserting {total_points} points in batches of {batch_size}")
+        
+        for i in range(0, total_points, batch_size):
+            batch_end = min(i + batch_size, total_points)
+            batch_points = points[i:batch_end]
+            
+            try:
+                logger.info(f"Upserting batch {i//batch_size + 1}/{(total_points-1)//batch_size + 1} ({len(batch_points)} points)")
+                self.client.upsert(
+                    collection_name=self.collection_name,
+                    points=batch_points
+                )
+                
+                # Sleep briefly between batches to avoid rate limits
+                if i + batch_size < total_points:
+                    import time
+                    time.sleep(0.5)  # 500ms pause between batches
+                    
+            except Exception as e:
+                logger.error(f"Error upserting batch {i//batch_size + 1}: {str(e)}")
+                # If we hit a rate limit or size limit, try with smaller batches
+                if "Payload error" in str(e) or "rate_limit_exceeded" in str(e):
+                    logger.info("Payload too large or rate limit exceeded, retrying with smaller batches")
+                    
+                    # Retry with smaller batches
+                    smaller_batch_size = batch_size // 2
+                    for j in range(i, batch_end, smaller_batch_size):
+                        sub_batch_end = min(j + smaller_batch_size, batch_end)
+                        sub_batch_points = points[j:sub_batch_end]
+                        
+                        try:
+                            logger.info(f"Upserting smaller batch of {len(sub_batch_points)} points")
+                            self.client.upsert(
+                                collection_name=self.collection_name,
+                                points=sub_batch_points
+                            )
+                            import time
+                            time.sleep(1)  # Longer pause between retries
+                        except Exception as sub_e:
+                            logger.error(f"Error in retry batch: {str(sub_e)}")
+                            # If even smaller batches fail, try one by one
+                            logger.info("Trying to upsert points one by one")
+                            for point in sub_batch_points:
+                                try:
+                                    self.client.upsert(
+                                        collection_name=self.collection_name,
+                                        points=[point]
+                                    )
+                                    time.sleep(0.2)  # Small pause between individual points
+                                except Exception as point_e:
+                                    logger.error(f"Failed to upsert point: {str(point_e)}")
+                else:
+                    # For other errors, log and continue
+                    logger.error(f"Unexpected error during upsert: {str(e)}")
+        
+        logger.info(f"Stored {total_points} small chunks for document: {processed_doc['doc_id']}")
     
     def search(self, 
                query: str, 
@@ -498,38 +586,130 @@ def ingest_document(file_content: Union[str, bytes], filename: str) -> Dict[str,
     Returns:
         Dict: Response with document ID
     """
+    logger.info(f"Starting ingestion for filename: {filename}")
+    
+    # DIAGNOSTIC LOG: Log initial file_content type and size
+    content_size = len(file_content) if isinstance(file_content, str) else len(file_content)
+    logger.info(f"ingest_document received content of type: {type(file_content)}, size: {content_size} bytes/chars")
+    
+    try:
+        if isinstance(file_content, str):
+            content_snippet_ingest = file_content[:200]
+        elif isinstance(file_content, bytes):
+            try:
+                content_snippet_ingest = file_content[:200].decode('utf-8', errors='replace')
+            except Exception as decode_e:
+                content_snippet_ingest = f"[Binary data, first 20 bytes: {file_content[:20].hex()}]"
+        else:
+            content_snippet_ingest = f"[Unknown content type: {type(file_content)}]"
+            
+        logger.info(f"ingest_document received content snippet (first 200 chars/bytes): {content_snippet_ingest}")
+    except Exception as log_e:
+        logger.error(f"Error logging initial content snippet in ingest_document: {log_e}")
+
+    # --- Text Extraction Logic ---
+    extracted_text = None
+    file_lower = filename.lower()
+
+    if file_lower.endswith('.pdf') and PdfReader:
+        logger.info(f"Processing PDF file: {filename}")
+        try:
+            if isinstance(file_content, bytes):
+                pdf_file = io.BytesIO(file_content)
+                reader = PdfReader(pdf_file)
+                extracted_text = ""
+                for page in reader.pages:
+                    extracted_text += page.extract_text() + "\n"
+                logger.info(f"Successfully extracted text from PDF: {filename}")
+            else:
+                logger.error(f"Expected bytes for PDF processing, got {type(file_content)}")
+        except Exception as e:
+            logger.error(f"Error extracting text from PDF {filename}: {str(e)}")
+            # Optionally raise error or return failure
+
+    elif file_lower.endswith('.docx') and docx:
+        logger.info(f"Processing DOCX file: {filename}")
+        try:
+            if isinstance(file_content, bytes):
+                doc_file = io.BytesIO(file_content)
+                document = docx.Document(doc_file)
+                extracted_text = "\n".join([para.text for para in document.paragraphs])
+                logger.info(f"Successfully extracted text from DOCX: {filename}")
+            else:
+                logger.error(f"Expected bytes for DOCX processing, got {type(file_content)}")
+        except Exception as e:
+            logger.error(f"Error extracting text from DOCX {filename}: {str(e)}")
+            # Optionally raise error or return failure
+
+    elif file_lower.endswith('.txt'):
+        logger.info(f"Processing TXT file: {filename}")
+        if isinstance(file_content, bytes):
+            try:
+                # Try decoding with UTF-8 first (most common)
+                extracted_text = file_content.decode('utf-8', errors='strict')
+                logger.info(f"Successfully decoded TXT as UTF-8: {filename}")
+            except UnicodeDecodeError:
+                logger.warning(f"UTF-8 decoding failed for {filename}, trying latin-1")
+                try:
+                    # Fallback to latin-1 if UTF-8 fails
+                    extracted_text = file_content.decode('latin-1', errors='replace')
+                    logger.info(f"Successfully decoded TXT as latin-1: {filename}")
+                except Exception as e:
+                     logger.error(f"Error decoding TXT {filename} even with fallback: {str(e)}")
+        elif isinstance(file_content, str):
+             extracted_text = file_content # Assume already decoded if string
+        else:
+             logger.error(f"Expected bytes or str for TXT processing, got {type(file_content)}")
+
+    else:
+        logger.warning(f"Unsupported file type or missing library for: {filename}. Attempting direct decode.")
+        if isinstance(file_content, bytes):
+             extracted_text = file_content.decode('utf-8', errors='replace') # Fallback attempt
+        elif isinstance(file_content, str):
+             extracted_text = file_content
+        else:
+             logger.error(f"Cannot process content type {type(file_content)} for {filename}")
+
+    if extracted_text is None:
+         logger.error(f"Failed to extract text from {filename}. Skipping ingestion.")
+         # Return an error or empty success indicator
+         return {"status": "error", "message": f"Failed to extract text from {filename}"}
+    # --- End Text Extraction Logic ---
+
+
     # Create document ID
     doc_id = str(uuid.uuid4())
-    
+
     # Create document metadata
     metadata = {
         "doc_id": doc_id,
         "title": filename,
     }
-    
-    # For very large documents, we need to break them into manageable chunks
-    # to avoid memory issues and rate limits
+
+    # Use the extracted_text for processing
     try:
-        # Convert to string if bytes
-        if isinstance(file_content, bytes):
-            text = file_content.decode('utf-8', errors='replace')
-        else:
-            text = file_content
-        
-        # Check if the document is very large (rough estimate)
-        # A typical large PDF might be several MB of text
-        if len(text) > 1000000:  # More than ~1MB of text
-            logger.info(f"Large document detected ({len(text)} chars). Processing in sections.")
-            
+        # Check if the extracted text is very large
+        if len(extracted_text) > 1000000:  # More than ~1MB of text
+            logger.info(f"Large document detected ({len(extracted_text)} chars). Processing in sections.")
+
             # Break into major sections (roughly 500KB each)
             section_size = 500000  # ~500KB per section
-            sections = [text[i:i+section_size] for i in range(0, len(text), section_size)]
+            sections = [extracted_text[i:i+section_size] for i in range(0, len(extracted_text), section_size)]
             
             logger.info(f"Document split into {len(sections)} sections for processing")
-            
+
             # Process each section separately
             processor = DocumentProcessor()
-            store = QdrantStore()
+
+            # Initialize Qdrant store with URL and API key from environment variables
+            qdrant_url = os.getenv("QDRANT_URL")
+            qdrant_api_key = os.getenv("QDRANT_API_KEY")
+            
+            if not qdrant_url or not qdrant_api_key:
+                logger.error("QDRANT_URL or QDRANT_API_KEY environment variables not set")
+                raise ValueError("QDRANT_URL or QDRANT_API_KEY environment variables not set")
+            
+            store = QdrantStore(url=qdrant_url, api_key=qdrant_api_key)
             
             for i, section in enumerate(sections):
                 section_metadata = metadata.copy()
@@ -550,38 +730,44 @@ def ingest_document(file_content: Union[str, bytes], filename: str) -> Dict[str,
             processor = DocumentProcessor()
             processed_doc = processor.process_document(file_content, metadata)
             
+            # Initialize Qdrant store with URL and API key from environment variables
+            qdrant_url = os.getenv("QDRANT_URL")
+            qdrant_api_key = os.getenv("QDRANT_API_KEY")
+            
+            if not qdrant_url or not qdrant_api_key:
+                logger.error("QDRANT_URL or QDRANT_API_KEY environment variables not set")
+                raise ValueError("QDRANT_URL or QDRANT_API_KEY environment variables not set")
+
             # Store document
-            store = QdrantStore()
+            store = QdrantStore(url=qdrant_url, api_key=qdrant_api_key)
+            # Pass the extracted_text to the processor
+            processed_doc = processor.process_document(extracted_text, metadata)
             store.store_document(processed_doc)
     except Exception as e:
-        logger.error(f"Error processing document: {str(e)}")
+        logger.error(f"Error processing document content for {filename}: {str(e)}")
         # Re-raise with more context
-        raise Exception(f"Error processing document {filename}: {str(e)}")
-    
-    # Store a local copy of the document for fallback
+        raise Exception(f"Error processing document content for {filename}: {str(e)}")
+
+    # Store a local copy of the *extracted text* for fallback
     try:
-        if isinstance(file_content, bytes):
-            doc_text = file_content.decode('utf-8', errors='replace')
-        else:
-            doc_text = file_content
-            
-        doc_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'documents', filename)
+        # Use the extracted_text string directly
+        doc_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'documents', filename + ".txt") # Save as .txt
         os.makedirs(os.path.dirname(doc_path), exist_ok=True)
-        
-        with open(doc_path, 'w') as f:
-            f.write(doc_text)
-            
-        logger.info(f"Stored local copy of document at {doc_path}")
+
+        with open(doc_path, 'w', encoding='utf-8') as f: # Ensure writing as UTF-8
+            f.write(extracted_text)
+
+        logger.info(f"Stored local copy of extracted text at {doc_path}")
     except Exception as e:
-        logger.error(f"Error storing local copy of document: {str(e)}")
-    
+        logger.error(f"Error storing local copy of extracted text for {filename}: {str(e)}")
+
     # Return response
     return {
         "status": "success",
         "doc_id": doc_id,
     }
 
-def retrieve_chunks(query: str, top_n: int = 2) -> List[str]:
+def retrieve_chunks(query: str, top_n: int = 1) -> List[str]:
     """
     Retrieve relevant chunks for a given query
     
@@ -602,8 +788,16 @@ def retrieve_chunks(query: str, top_n: int = 2) -> List[str]:
         " ".join(query.lower().split()),  # Normalize spacing and case
     ]
     
-    # Initialize Qdrant store
-    store = QdrantStore()
+    # Initialize Qdrant store with URL and API key from environment variables
+    qdrant_url = os.getenv("QDRANT_URL")
+    qdrant_api_key = os.getenv("QDRANT_API_KEY")
+    
+    if not qdrant_url or not qdrant_api_key:
+        logger.error("QDRANT_URL or QDRANT_API_KEY environment variables not set")
+        return []
+    
+    logger.info(f"Connecting to Qdrant at {qdrant_url}")
+    store = QdrantStore(url=qdrant_url, api_key=qdrant_api_key)
     
     # Search for each query variation
     all_results = []
@@ -623,18 +817,10 @@ def retrieve_chunks(query: str, top_n: int = 2) -> List[str]:
         else:
             logger.info(f"Query '{q}' returned no chunks")
     
-    # If no results, try keyword-based search as fallback
+    # If no results, log a warning and return an empty list
     if not all_results:
-        logger.info("No chunks returned from vector search, falling back to keyword search")
-        
-        # Import keyword_search from ragie_utils
-        from utils.ragie_utils import keyword_search
-        
-        keyword_results = keyword_search(query, top_n)
-        
-        if keyword_results:
-            logger.info("Keyword search found results, using these instead")
-            return keyword_results
+        logger.warning("No chunks returned from vector search, returning empty list")
+        return []
     
     # Remove duplicates while preserving order
     unique_results = []
@@ -662,4 +848,12 @@ def retrieve_chunks(query: str, top_n: int = 2) -> List[str]:
     for i, text in enumerate(parent_chunks):
         logger.info(f"Parent chunk {i+1}: {text[:100]}...")
     
+    # Return the parent chunks directly without using ragie_utils.sanitize_text
+    logger.info(f"Returning {len(parent_chunks)} parent chunks")
+    for i, text in enumerate(parent_chunks):
+        logger.info(f"Parent chunk {i+1}: {text[:100]}...")
+    return parent_chunks
+    logger.info(f"Returning {len(parent_chunks)} parent chunks")
+    for i, text in enumerate(parent_chunks):
+        logger.info(f"Parent chunk {i+1}: {text[:100]}...")
     return parent_chunks

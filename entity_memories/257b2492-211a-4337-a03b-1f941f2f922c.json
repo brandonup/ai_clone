@@ -1,0 +1,9 @@
+{
+  "Brandon": {
+    "type": "PERSON",
+    "attributes": {
+      "interest": "Entrepreneurship"
+    },
+    "importance": "high"
+  }
+}

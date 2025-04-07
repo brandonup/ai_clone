@@ -4,61 +4,43 @@ Router module for deciding how to answer user queries
 import re
 import logging
 import os
-import json
 from langchain_community.chat_models import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
+
+# Global variables to store persona-specific patterns
+persona_rag_patterns = []
+persona_base_llm_patterns = []
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configure the confidence threshold for RAG
-RAG_CONFIDENCE_THRESHOLD = 0.15  # Lowered from 0.2 to match the min_score in ragie_utils.py
+RAG_CONFIDENCE_THRESHOLD = 0.7  # Adjust this value based on testing
 
-# Global variables to store persona-specific patterns
-persona_rag_patterns = []
-persona_base_llm_patterns = []
-
-def choose_route(question, ragie_chunks):
+def choose_route(question, rag_chunks):
     """
     Determine the appropriate route for answering a question
     using RAG confidence threshold and LLM-based routing
     
     Args:
         question: User question
-        ragie_chunks: List of chunks retrieved from Ragie
+        rag_chunks: List of chunks retrieved from RAG
         
     Returns:
-        str: Route choice - "ragie", "force_ragie", "web", or "base"
+        str: Route choice - "rag", "force_rag", "web", or "base"
     """
     # Normalize question for analysis
     q_lower = question.lower().strip()
     
-    # Special case for self-introduction questions
-    self_intro_patterns = [
-        r'(tell|talk).+about yourself',
-        r'who are you',
-        r'introduce yourself',
-        r'what.+your (background|experience|expertise)',
-        r'what.+your (name|role)',
-        r'what do you do',
-    ]
-    
-    for pattern in self_intro_patterns:
-        if re.search(pattern, q_lower):
-            logger.info(f"Routing to 'base' because self-introduction pattern matched: {pattern}")
-            return "base"
-    
-    # Note: Persona-specific pattern matching has been removed as requested
-    
     # First, check if RAG chunks exist and meet the confidence threshold
-    if ragie_chunks:
-        rag_confidence = calculate_rag_confidence(question, ragie_chunks)
+    if rag_chunks:
+        rag_confidence = calculate_rag_confidence(question, rag_chunks)
         logger.info(f"RAG confidence score: {rag_confidence}")
         
         if rag_confidence >= RAG_CONFIDENCE_THRESHOLD:
-            logger.info(f"Routing to 'ragie' because chunks meet confidence threshold ({rag_confidence:.2f} >= {RAG_CONFIDENCE_THRESHOLD})")
-            return "ragie"
+            logger.info(f"Routing to 'rag' because chunks meet confidence threshold ({rag_confidence:.2f} >= {RAG_CONFIDENCE_THRESHOLD})")
+            return "rag"
         else:
             logger.info(f"RAG chunks found but confidence too low ({rag_confidence:.2f} < {RAG_CONFIDENCE_THRESHOLD})")
             # Continue to other routing methods
@@ -66,17 +48,14 @@ def choose_route(question, ragie_chunks):
         logger.info("No RAG chunks found")
     
     # If RAG confidence is low or no chunks found, check if it's a web search query
-    web_search_needed = is_web_search_query(question)
-    if web_search_needed:
+    if is_web_search_query(question):
         logger.info("Routing to 'web' based on LLM decision")
         return "web"
-    else:
-        logger.info("LLM decided this query does NOT need web search")
     
     # For non-web-search queries with RAG chunks (but low confidence), still use RAG
-    if ragie_chunks:
-        logger.info("Routing to 'ragie' because chunks were found (despite low confidence)")
-        return "ragie"
+    if rag_chunks:
+        logger.info("Routing to 'rag' because chunks were found (despite low confidence)")
+        return "rag"
     
     # Check for base LLM indicators (questions that don't need external knowledge)
     base_llm_patterns = [
@@ -103,8 +82,8 @@ def choose_route(question, ragie_chunks):
     
     # Default to trying RAG again with a modified query
     # This implements the advanced RAG optimization approach
-    logger.info(f"Routing to 'force_ragie' as default")
-    return "force_ragie"
+    logger.info(f"Routing to 'force_rag' as default")
+    return "force_rag"
 
 def calculate_rag_confidence(question, chunks):
     """
@@ -188,49 +167,41 @@ def is_web_search_query(question):
     openai_api_key = os.getenv("OPENAI_API_KEY")
     if not openai_api_key:
         logger.error("OPENAI_API_KEY environment variable not set")
-        # Fall back to pattern matching
-        return check_time_sensitive_patterns(question.lower())
+        # Return False if OpenAI API key is not available
+        return False
     
     # Create the chat model (using a smaller/cheaper model is fine for this task)
     try:
         model = ChatOpenAI(
             temperature=0.1,  # Low temperature for consistent results
-            model_name="gpt-3.5-turbo",  # Standard chat model
+            model_name="gpt-3.5-turbo",  # Could use a smaller model to save costs
             openai_api_key=openai_api_key,
             max_tokens=50  # We only need a short response
         )
         
         # Create the prompt
         system_content = """
-        You are a routing assistant for an AI Coach application. Your job is to determine if a user query requires up-to-date or real-time information from the web.
+        You are a routing assistant for an AI Coach application. Your job is to determine if a user query requires web search.
         
         Respond ONLY with "Web Search" or "Not Web Search".
         
-        Consider the following:
-        1. **Time Sensitivity**: Does the user need the most recent information (e.g., current events, news, sports scores, weather, stock prices, product availability)?
-        2. **Knowledge Cutoff**: Could the query refer to information that may not be in your existing knowledge (e.g., anything that happened after your cutoff date)?
-        3. **Explicit Time References**: Does the query mention “today,” “yesterday,” “this week,” “recently,” or other indicators that the user wants current data?
-        4. **Location-Based or Dynamic Data**: Isf the user asking for data that changes often (local events, traffic updates, store hours, product inventory, etc.)?
-
-        Use "Web Search" if the query:
-        - Asks about current or recent events, breaking news, or up-to-date statistics
-        - Mentions or implies the need for real-time data (weather forecasts, stock/crypto prices, sports scores)
-        - Includes explicit time references like “today,” “yesterday,” “tomorrow,” “in the last month,” etc.
-        - Requests location-specific or dynamic information (e.g., store hours, local traffic, conference dates)
-        - Asks about trending topics, social media updates, or anything that could change rapidly
-        - Involves topics that are likely to have changed since your knowledge cutoff (e.g., new product releases, policy updates, trending topics)
-
-        Use "Not Web Search" if the query:
-        - Asks for general advice, coaching, or self-improvement
-        - Seeks explanations of concepts, theories, or other timeless information
-        - Is hypothetical or does not depend on the latest data
-        - Refers to well-established knowledge (historical events, widely recognized facts) that likely hasn't changed
-
-        Respond ONLY with:
-        - **"Web Search"** if the user query fits any time-sensitive or real-time criteria.
-        - **"Not Web Search"** otherwise.
-        """
+        Use "Web Search" for:
+        - Questions about current events, news, or recent developments
+        - Weather forecasts or current conditions
+        - Sports scores or recent game results
+        - Stock prices or market information
+        - Questions containing time indicators like today, yesterday, tomorrow
+        - Questions about what's currently happening or trending
+        - Questions about protests, events, or incidents that happened recently
+        - Questions about upcoming events, conferences, workshops, or future plans
+        - Questions that mention specific dates or time periods in the future
         
+        Use "Not Web Search" for:
+        - General advice or coaching questions
+        - Questions about concepts, theories, or timeless information
+        - Personal development or self-improvement questions
+        - Questions that don't require up-to-date information
+        """
         
         # Create messages
         messages = [
@@ -245,67 +216,13 @@ def is_web_search_query(question):
         
         logger.info(f"LLM routing decision for '{question}': {result}")
         
-        # Return True if the response contains "Web Search", False if it contains "Not Web Search"
-        if "not web search" in result.lower():
-            logger.info("LLM decided this query does NOT need web search")
-            return False
-        elif "web search" in result.lower():
-            logger.info("LLM decided this query needs web search")
-            return True
-        else:
-            # If the response doesn't match expected format, fall back to pattern matching
-            logger.warning(f"Unexpected LLM response format: {result}. Falling back to pattern matching.")
-            return check_time_sensitive_patterns(question.lower())
+        # Return True if the response contains "Web Search"
+        return "web search" in result.lower()
         
     except Exception as e:
         logger.error(f"Error in LLM routing: {str(e)}")
-        # Fall back to pattern matching if LLM fails
-        logger.info("Falling back to pattern matching for routing decision")
-        return check_time_sensitive_patterns(question.lower())
-
-def check_time_sensitive_patterns(q_lower):
-    """
-    Check if a query is time-sensitive or requires current information
-    
-    Args:
-        q_lower: Lowercase question
-        
-    Returns:
-        bool: True if it's time-sensitive
-    """
-    # Enhanced patterns for time-sensitive queries
-    time_sensitive_patterns = [
-        # Time indicators (high priority)
-        r'\b(today|tomorrow|yesterday|tonight|this morning|this afternoon|this evening)\b',
-        r'\b(current|latest|recent|now|right now|at the moment)\b',
-        r'\b(this week|this month|this year|next week|next month|next year)\b',
-        
-        # News and events
-        r'\b(news|headline|breaking|update|development|announcement)\b',
-        r'\b(happened|occurring|taking place|going on|event)\b',
-        
-        # Sports and entertainment
-        r'\b(score|game|match|playing|showing|performance|concert)\b',
-        
-        # Market information
-        r'\b(stock price|market|rate|trading at|exchange rate)\b',
-        
-        # Specific dates that suggest current information
-        r'\b(in 2024|in 2025|2024|2025)\b',
-        
-        # Questions about protests, events, or incidents
-        r'\b(protest|event|incident|happening|occurred)\b',
-        
-        # Weather terms
-        r'\b(weather|forecast|temperature|rain|snow|sunny|cloudy)\b',
-    ]
-    
-    for pattern in time_sensitive_patterns:
-        if re.search(pattern, q_lower):
-            logger.info(f"Time-sensitive pattern matched: {pattern}")
-            return True
-            
-    return False
+        # Return False if LLM fails
+        return False
 
 def extract_key_terms(question):
     """
@@ -361,21 +278,137 @@ def contains_key_terms(chunk, key_terms):
     
     return matches >= min_required
 
-def generate_persona_patterns(coach_name, persona_description):
+def generate_persona_patterns(coach_name, coach_persona):
     """
-    Generate routing patterns based on the coach's persona description
+    Generate persona-specific patterns for routing based on coach name and persona
     
     Args:
         coach_name: Name of the coach
-        persona_description: Description of the coach's persona
+        coach_persona: Description of the coach's persona/expertise
         
     Returns:
-        dict: Dictionary containing empty patterns for RAG and base LLM routing
+        dict: Dictionary containing 'rag_patterns' and 'base_llm_patterns'
     """
-    # Pattern matching has been removed as requested
-    # Always return empty patterns
-    logger.info(f"Pattern matching disabled. Returning empty patterns for coach: {coach_name}")
+    global persona_rag_patterns, persona_base_llm_patterns
+    
+    logger.info(f"Generating persona-specific patterns for {coach_name}")
+    
+    # Extract key terms from the persona description
+    persona_lower = coach_persona.lower()
+    
+    # Define common coaching domains and their related terms
+    domains = {
+        "fitness": ["workout", "exercise", "training", "fitness", "strength", "cardio", 
+                   "weight", "muscle", "gym", "nutrition", "diet", "health"],
+        
+        "business": ["business", "entrepreneur", "startup", "company", "leadership", 
+                    "management", "strategy", "marketing", "sales", "finance", "investment"],
+        
+        "life_coaching": ["goal", "motivation", "habit", "productivity", "balance", 
+                         "mindset", "personal", "development", "growth", "success"],
+        
+        "career": ["career", "job", "interview", "resume", "workplace", "profession", 
+                  "skill", "promotion", "salary", "negotiation"],
+        
+        "relationship": ["relationship", "communication", "conflict", "partner", 
+                        "marriage", "family", "parenting", "children"],
+        
+        "mental_health": ["stress", "anxiety", "depression", "emotion", "therapy", 
+                         "mindfulness", "meditation", "wellbeing", "wellness"]
+    }
+    
+    # Identify which domains are relevant to this coach
+    relevant_domains = []
+    for domain, terms in domains.items():
+        if any(term in persona_lower for term in terms):
+            relevant_domains.append(domain)
+            logger.info(f"Coach persona matches domain: {domain}")
+    
+    # If no specific domains are identified, default to general life coaching
+    if not relevant_domains:
+        relevant_domains = ["life_coaching"]
+        logger.info("No specific domains identified, defaulting to general life coaching")
+    
+    # Generate RAG patterns based on relevant domains
+    rag_patterns = []
+    
+    # Add domain-specific RAG patterns
+    for domain in relevant_domains:
+        if domain == "fitness":
+            rag_patterns.extend([
+                r'\b(workout|exercise|training) (plan|program|routine|schedule)\b',
+                r'\b(diet|nutrition|meal) (plan|program|advice)\b',
+                r'\bhow (to|do I) (build|gain|lose) (muscle|weight|strength)\b',
+                r'\bspecific (exercise|workout|training) for (beginner|intermediate|advanced)\b'
+            ])
+        
+        elif domain == "business":
+            rag_patterns.extend([
+                r'\bhow (to|do I) (start|grow|scale|manage) (a|my) (business|startup|company)\b',
+                r'\b(business|marketing|sales|financial) (strategy|plan|model)\b',
+                r'\b(leadership|management) (style|approach|technique|method)\b',
+                r'\b(investor|investment|funding|venture capital|pitch)\b'
+            ])
+        
+        elif domain == "life_coaching":
+            rag_patterns.extend([
+                r'\bhow (to|do I) (set|achieve|reach) (goals|objectives)\b',
+                r'\b(morning|daily|weekly) (routine|habit|practice)\b',
+                r'\b(productivity|time management|organization) (system|method|technique)\b',
+                r'\b(work-life|life) balance\b'
+            ])
+        
+        elif domain == "career":
+            rag_patterns.extend([
+                r'\b(resume|cv|cover letter) (advice|tips|review)\b',
+                r'\b(job|interview) (preparation|tips|questions)\b',
+                r'\bhow (to|do I) (negotiate|ask for) (a raise|promotion|salary)\b',
+                r'\b(career|job) (change|transition|advancement)\b'
+            ])
+        
+        elif domain == "relationship":
+            rag_patterns.extend([
+                r'\b(communication|conflict resolution) (skills|techniques|methods)\b',
+                r'\bhow (to|do I) (improve|strengthen|fix) (my|a) relationship\b',
+                r'\b(parenting|family) (advice|strategies|techniques)\b',
+                r'\b(marriage|partnership) (counseling|therapy|advice)\b'
+            ])
+        
+        elif domain == "mental_health":
+            rag_patterns.extend([
+                r'\b(stress|anxiety) (management|reduction|relief|techniques)\b',
+                r'\b(mindfulness|meditation) (practice|technique|exercise)\b',
+                r'\bhow (to|do I) (cope with|manage|overcome) (stress|anxiety|depression)\b',
+                r'\b(emotional|mental) (wellbeing|health|resilience)\b'
+            ])
+    
+    # Generate base LLM patterns (questions that don't need external knowledge)
+    base_llm_patterns = [
+        # General advice or opinion questions
+        r'^(what (do|would) you|how (do|would|can) you)',
+        r'^(can you|could you) (help|advise|suggest)',
+        
+        # Hypothetical scenarios
+        r'(if|imagine|suppose|what if)',
+        
+        # Personal coaching questions
+        r'(how (can|should) i|what (can|should) i)',
+        r'(advice|suggestion|tip|help) (for|with|on)',
+        
+        # Simple factual questions that a general LLM should know
+        r'^(what is|who is|how does) (a|an|the)',
+        
+        # Questions about the coach
+        f'(who are you|tell me about yourself|what is your background|what do you do|are you {coach_name})'
+    ]
+    
+    # Update global variables
+    persona_rag_patterns = rag_patterns
+    persona_base_llm_patterns = base_llm_patterns
+    
+    logger.info(f"Generated {len(rag_patterns)} RAG patterns and {len(base_llm_patterns)} base LLM patterns")
+    
     return {
-        "rag_patterns": [],
-        "base_llm_patterns": []
+        'rag_patterns': rag_patterns,
+        'base_llm_patterns': base_llm_patterns
     }

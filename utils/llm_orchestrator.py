@@ -12,14 +12,44 @@ from langchain.chains import LLMChain
 
 logger = logging.getLogger(__name__)
 
-def generate_answer(question, context=None, coach_name="AI Coach", persona="Persona", source="Base LLM"):
+def get_llm_for_entity_extraction(temperature=0.0):
+    """
+    Get a configured LLM for entity extraction
+    
+    Args:
+        temperature: Temperature for the LLM
+        
+    Returns:
+        Function that takes a prompt and returns a response
+    """
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    if not openai_api_key:
+        raise ValueError("OPENAI_API_KEY environment variable not set")
+    
+    # Create the chat model
+    model = ChatOpenAI(
+        temperature=temperature,  # Low temperature for consistent results
+        model_name="gpt-3.5-turbo",  # Could use a smaller model to save costs
+        openai_api_key=openai_api_key,
+        max_tokens=1024
+    )
+    
+    # Create a function that takes a prompt and returns a response
+    def llm_function(prompt):
+        messages = [HumanMessage(content=prompt)]
+        response = model(messages)
+        return response.content
+    
+    return llm_function
+
+def generate_answer(question, context=None, coach_name="AI Coach", persona="Persona", source="Base LLM", conversation_history=None, entity_memory=None):
     """
     Generate an answer to a user question using LangChain and OpenAI
     with optimized context handling to avoid token limit issues
     
     Args:
         question: User question
-        context: Optional context from Ragie or web search
+        context: Optional context from RAG or web search
         coach_name: Name of the coach
         persona: Coach persona description
         source: Source of the reference information (e.g., "Knowledge Base (RAG)", "Web Search (Serper.dev)")
@@ -34,7 +64,7 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
     # Create the chat model
     model = ChatOpenAI(
         temperature=0.3,  # Lower temperature for more factual responses
-        model_name="gpt-3.5-turbo",  # Standard chat model
+        model_name="gpt-3.5-turbo-16k",  # Use 16k model for larger context
         openai_api_key=openai_api_key,
         max_tokens=1024  # Limit response length to avoid token issues
     )
@@ -60,7 +90,10 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
     system_content += "\n=== INSTRUCTIONS ===\n"
     system_content += f"- Always respond in the tone and style of {coach_name}, with a friendly and professional tone.\n"
     system_content += "- Keep answers concise unless more detail is asked, and focus on actionable advice.\n"
-    system_content += "- Do not mention that you are an AI or that you're using any specific information sources.\n"
+    system_content += "- NEVER mention that you are an AI language model or that you're using any specific information sources.\n"
+    system_content += "- NEVER say you don't have the ability to remember information. You DO have memory through the entity memory system.\n"
+    system_content += "- When asked about the user's name or other personal information, check the ENTITY MEMORY section for this information.\n"
+    system_content += "- If you find the user's name in memory, use it and acknowledge that you remember them.\n"
     
     # Process context to avoid token limit issues
     if context:
@@ -109,7 +142,21 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                 context = context[:max_chars] + "..."
                 logger.info(f"Truncated context to ~{estimate_tokens(context)} tokens using character-based truncation")
         
-        # Add context to system message with clear separation
+    # Add conversation history to system message if available
+    if conversation_history:
+        system_content += "\n=== RECENT CONVERSATION HISTORY ===\n"
+        system_content += conversation_history
+    
+    # Add entity memory to system message if available
+    if entity_memory:
+        relevant_entities = entity_memory.get_relevant_entities(question)
+        if relevant_entities:
+            entity_context = entity_memory.format_entity_memories(relevant_entities)
+            system_content += "\n=== ENTITY MEMORY ===\n"
+            system_content += entity_context
+    
+    # Add context to system message with clear separation
+    if context:
         system_content += f"\n=== REFERENCE INFORMATION - {source} ===\n"
         system_content += context
     
@@ -125,8 +172,11 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
     
     try:
         # Create a prompt template for LangSmith tracing
+        # Escape any curly braces in system_content to avoid template syntax errors
+        safe_system_content = system_content.replace("{", "{{").replace("}", "}}")
+        
         prompt_template = ChatPromptTemplate.from_messages([
-            ("system", system_content),
+            ("system", safe_system_content),
             ("human", "{question}")
         ])
         
@@ -197,7 +247,10 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                 system_content += "\n=== INSTRUCTIONS ===\n"
                 system_content += f"- Always respond in the tone and style of {coach_name}, with a friendly and professional tone.\n"
                 system_content += "- Keep answers concise unless more detail is asked, and focus on actionable advice.\n"
-                system_content += "- Do not mention that you are an AI or that you're using any specific information sources.\n"
+                system_content += "- NEVER mention that you are an AI language model or that you're using any specific information sources.\n"
+                system_content += "- NEVER say you don't have the ability to remember information. You DO have memory through the entity memory system.\n"
+                system_content += "- When asked about the user's name or other personal information, check the ENTITY MEMORY section for this information.\n"
+                system_content += "- If you find the user's name in memory, use it and acknowledge that you remember them.\n"
                 
                 # Add reduced context
                 system_content += f"\n=== REFERENCE INFORMATION (REDUCED) - {source} ===\n"
@@ -210,8 +263,11 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                 
                 try:
                     # Create a prompt template for LangSmith tracing
+                    # Escape any curly braces in system_content to avoid template syntax errors
+                    safe_system_content = system_content.replace("{", "{{").replace("}", "}}")
+                    
                     prompt_template = ChatPromptTemplate.from_messages([
-                        ("system", system_content),
+                        ("system", safe_system_content),
                         ("human", "{question}")
                     ])
                     
@@ -288,7 +344,10 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                         system_content += "\n=== INSTRUCTIONS ===\n"
                         system_content += f"- Always respond in the tone and style of {coach_name}, with a friendly and professional tone.\n"
                         system_content += "- Keep answers concise unless more detail is asked, and focus on actionable advice.\n"
-                        system_content += "- Do not mention that you are an AI or that you're using any specific information sources.\n"
+                        system_content += "- NEVER mention that you are an AI language model or that you're using any specific information sources.\n"
+                        system_content += "- NEVER say you don't have the ability to remember information. You DO have memory through the entity memory system.\n"
+                        system_content += "- When asked about the user's name or other personal information, check the ENTITY MEMORY section for this information.\n"
+                        system_content += "- If you find the user's name in memory, use it and acknowledge that you remember them.\n"
                         
                         if minimal_context:
                             # Add minimal context
@@ -302,8 +361,11 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                         
                         try:
                             # Create a prompt template for LangSmith tracing
+                            # Escape any curly braces in system_content to avoid template syntax errors
+                            safe_system_content = system_content.replace("{", "{{").replace("}", "}}")
+                            
                             prompt_template = ChatPromptTemplate.from_messages([
-                                ("system", system_content),
+                                ("system", safe_system_content),
                                 ("human", "{question}")
                             ])
                             
@@ -349,7 +411,10 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                             system_content += "\n=== INSTRUCTIONS ===\n"
                             system_content += f"- Always respond in the tone and style of {coach_name}, with a friendly and professional tone.\n"
                             system_content += "- Keep answers concise unless more detail is asked, and focus on actionable advice.\n"
-                            system_content += "- Do not mention that you are an AI or that you're using any specific information sources.\n"
+                            system_content += "- NEVER mention that you are an AI language model or that you're using any specific information sources.\n"
+                            system_content += "- NEVER say you don't have the ability to remember information. You DO have memory through the entity memory system.\n"
+                            system_content += "- When asked about the user's name or other personal information, check the ENTITY MEMORY section for this information.\n"
+                            system_content += "- If you find the user's name in memory, use it and acknowledge that you remember them.\n"
                             
                             messages = [
                                 SystemMessage(content=system_content),
@@ -357,8 +422,11 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                             ]
                             
                             # Create a prompt template for LangSmith tracing
+                            # Escape any curly braces in system_content to avoid template syntax errors
+                            safe_system_content = system_content.replace("{", "{{").replace("}", "}}")
+                            
                             prompt_template = ChatPromptTemplate.from_messages([
-                                ("system", system_content),
+                                ("system", safe_system_content),
                                 ("human", "{question}")
                             ])
                             

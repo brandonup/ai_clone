@@ -62,7 +62,7 @@ If your network has restrictions on outbound connections:
 
 If you're unable to get Serper.dev working, consider these alternatives:
 
-1. **Use a different search API**: The application can be modified to use alternative search APIs like Bing Search API, Google Custom Search API, or SerpAPI.
+1. **Use a different search API**: The application can be modified to use alternative search APIs like Bing Search API or Google Custom Search API.
 
 2. **Implement a simple web scraper**: For basic search functionality, a custom web scraper could be implemented.
 
@@ -73,5 +73,5 @@ If you're unable to get Serper.dev working, consider these alternatives:
 If you continue to experience issues with the web search functionality, please:
 
 1. Check the application logs for specific error messages
-2. Contact Serper.dev support if the issue is related to your API key or account
+2. Contact SerpAPI support if the issue is related to your API key or account
 3. Consider implementing one of the alternative solutions mentioned above
