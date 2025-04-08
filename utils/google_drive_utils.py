@@ -97,17 +97,30 @@ def list_files_in_folder(folder_id):
     try:
         service = get_drive_service()
         
-        # Query for files in the folder
+        # Query for files in the folder, handling pagination
+        all_files = []
+        page_token = None
         query = f"'{folder_id}' in parents and trashed = false"
-        results = service.files().list(
-            q=query,
-            fields="files(id, name, mimeType)",
-            pageSize=100
-        ).execute()
         
-        files = results.get('files', [])
-        logger.info(f"Found {len(files)} files in Google Drive folder {folder_id}")
-        
+        while True:
+            results = service.files().list(
+                q=query,
+                fields="nextPageToken, files(id, name, mimeType)",
+                pageSize=100, # Fetch 100 at a time
+                pageToken=page_token
+            ).execute()
+            
+            files_on_page = results.get('files', [])
+            all_files.extend(files_on_page)
+            logger.info(f"Fetched {len(files_on_page)} files (total: {len(all_files)}) from Google Drive folder {folder_id}")
+            
+            page_token = results.get('nextPageToken', None)
+            if page_token is None:
+                break # No more pages
+
+        files = all_files # Use the complete list
+        logger.info(f"Found a total of {len(files)} files in Google Drive folder {folder_id}")
+
         # Filter for document types we can process
         supported_mimetypes = [
             'text/plain',

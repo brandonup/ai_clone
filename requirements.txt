@@ -1,7 +1,7 @@
 flask
 openai
-langchain>=0.1.0
-langchain-openai>=0.1.0
+langchain # Remove version constraint
+langchain-openai # Remove version constraint
 python-dotenv
 requests
 ragie
@@ -9,9 +9,15 @@ langchain-ragie
 google-api-python-client
 google-auth
 tiktoken
-langchain-community
-qdrant-client
+langchain-community # Remove version constraint (or keep if specific features needed)
+qdrant-client # Keep specific version if needed, or remove
 spacy>=3.5.0
 sentence-transformers>=2.2.2
 pypdf
 python-docx
+langchain_cohere # Remove version constraint
+langgraph # Remove version constraint
+langchain-qdrant # Remove version constraint
+pydantic # Add pydantic explicitly to manage its version
+langchain-google-genai # Added for Gemini models
+google-generativeai # Base SDK for Google AI

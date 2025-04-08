@@ -12,6 +12,7 @@ __pycache__/
 venv/
 env/
 ENV/
+ai_coach_env/
 
 # Logs
 *.log

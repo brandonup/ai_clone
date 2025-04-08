@@ -12,37 +12,9 @@ from langchain.chains import LLMChain
 
 logger = logging.getLogger(__name__)
 
-def get_llm_for_entity_extraction(temperature=0.0):
-    """
-    Get a configured LLM for entity extraction
-    
-    Args:
-        temperature: Temperature for the LLM
-        
-    Returns:
-        Function that takes a prompt and returns a response
-    """
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        raise ValueError("OPENAI_API_KEY environment variable not set")
-    
-    # Create the chat model
-    model = ChatOpenAI(
-        temperature=temperature,  # Low temperature for consistent results
-        model_name="gpt-3.5-turbo",  # Could use a smaller model to save costs
-        openai_api_key=openai_api_key,
-        max_tokens=1024
-    )
-    
-    # Create a function that takes a prompt and returns a response
-    def llm_function(prompt):
-        messages = [HumanMessage(content=prompt)]
-        response = model(messages)
-        return response.content
-    
-    return llm_function
+# Removed get_llm_for_entity_extraction function as it's no longer needed
 
-def generate_answer(question, context=None, coach_name="AI Coach", persona="Persona", source="Base LLM", conversation_history=None, entity_memory=None):
+def generate_answer(question, context=None, coach_name="AI Coach", persona="Persona", source="Base LLM", conversation_history=None): # Removed entity_memory parameter
     """
     Generate an answer to a user question using LangChain and OpenAI
     with optimized context handling to avoid token limit issues
@@ -91,9 +63,7 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
     system_content += f"- Always respond in the tone and style of {coach_name}, with a friendly and professional tone.\n"
     system_content += "- Keep answers concise unless more detail is asked, and focus on actionable advice.\n"
     system_content += "- NEVER mention that you are an AI language model or that you're using any specific information sources.\n"
-    system_content += "- NEVER say you don't have the ability to remember information. You DO have memory through the entity memory system.\n"
-    system_content += "- When asked about the user's name or other personal information, check the ENTITY MEMORY section for this information.\n"
-    system_content += "- If you find the user's name in memory, use it and acknowledge that you remember them.\n"
+    # Removed instructions related to entity memory
     
     # Process context to avoid token limit issues
     if context:
@@ -147,13 +117,7 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
         system_content += "\n=== RECENT CONVERSATION HISTORY ===\n"
         system_content += conversation_history
     
-    # Add entity memory to system message if available
-    if entity_memory:
-        relevant_entities = entity_memory.get_relevant_entities(question)
-        if relevant_entities:
-            entity_context = entity_memory.format_entity_memories(relevant_entities)
-            system_content += "\n=== ENTITY MEMORY ===\n"
-            system_content += entity_context
+    # Removed entity memory section
     
     # Add context to system message with clear separation
     if context:
@@ -248,9 +212,7 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                 system_content += f"- Always respond in the tone and style of {coach_name}, with a friendly and professional tone.\n"
                 system_content += "- Keep answers concise unless more detail is asked, and focus on actionable advice.\n"
                 system_content += "- NEVER mention that you are an AI language model or that you're using any specific information sources.\n"
-                system_content += "- NEVER say you don't have the ability to remember information. You DO have memory through the entity memory system.\n"
-                system_content += "- When asked about the user's name or other personal information, check the ENTITY MEMORY section for this information.\n"
-                system_content += "- If you find the user's name in memory, use it and acknowledge that you remember them.\n"
+                # Removed instructions related to entity memory
                 
                 # Add reduced context
                 system_content += f"\n=== REFERENCE INFORMATION (REDUCED) - {source} ===\n"
@@ -345,9 +307,7 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                         system_content += f"- Always respond in the tone and style of {coach_name}, with a friendly and professional tone.\n"
                         system_content += "- Keep answers concise unless more detail is asked, and focus on actionable advice.\n"
                         system_content += "- NEVER mention that you are an AI language model or that you're using any specific information sources.\n"
-                        system_content += "- NEVER say you don't have the ability to remember information. You DO have memory through the entity memory system.\n"
-                        system_content += "- When asked about the user's name or other personal information, check the ENTITY MEMORY section for this information.\n"
-                        system_content += "- If you find the user's name in memory, use it and acknowledge that you remember them.\n"
+                        # Removed instructions related to entity memory
                         
                         if minimal_context:
                             # Add minimal context
@@ -412,9 +372,7 @@ def generate_answer(question, context=None, coach_name="AI Coach", persona="Pers
                             system_content += f"- Always respond in the tone and style of {coach_name}, with a friendly and professional tone.\n"
                             system_content += "- Keep answers concise unless more detail is asked, and focus on actionable advice.\n"
                             system_content += "- NEVER mention that you are an AI language model or that you're using any specific information sources.\n"
-                            system_content += "- NEVER say you don't have the ability to remember information. You DO have memory through the entity memory system.\n"
-                            system_content += "- When asked about the user's name or other personal information, check the ENTITY MEMORY section for this information.\n"
-                            system_content += "- If you find the user's name in memory, use it and acknowledge that you remember them.\n"
+                            # Removed instructions related to entity memory
                             
                             messages = [
                                 SystemMessage(content=system_content),

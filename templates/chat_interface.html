@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Coach - Chat Interface</title>
+    <title>Coach {{ coach_name }} - Chat Interface</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 <body>
     <div class="chat-container">
         <div class="chat-header">
-            <h1>AI Coach Chat</h1>
+            <h1>Coach {{ coach_name }}</h1>
             <a href="{{ url_for('new_chat') }}" class="new-chat-btn">
                 <i class="fas fa-plus"></i> New Chat
             </a>
@@ -71,7 +71,7 @@
                     <div class="empty-chat-icon">
                         <i class="fas fa-comments"></i>
                     </div>
-                    <h2>Welcome to AI Coach</h2>
+                    <h2>Welcome to Coach {{ coach_name }}</h2>
                     <p>Ask your coach a question to start the conversation.</p>
                 </div>
             {% endif %}
