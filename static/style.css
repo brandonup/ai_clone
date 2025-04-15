@@ -4,7 +4,7 @@
 */
 
 :root {
-    --primary-color: #4a6fa5;
+    --primary-color: #008080;
     --secondary-color: #6c757d;
     --light-color: #f8f9fa;
     --dark-color: #343a40;
@@ -60,6 +60,17 @@ body {
     color: white;
 }
 
+.role-tag {
+    font-size: 0.9rem; /* Increased font size */
+    color: rgba(255, 255, 255, 0.8);
+    margin-top: 4px;
+    /* Removed text-align: right; */
+}
+
+.clone-header-info {
+    /* Removed text-align: right; */
+}
+
 .new-chat-btn {
     background-color: rgba(255, 255, 255, 0.2);
     color: white;
@@ -77,6 +88,11 @@ body {
 
 .new-chat-btn:hover {
     background-color: rgba(255, 255, 255, 0.3);
+}
+
+.header-actions {
+    display: flex;
+    gap: 10px;
 }
 
 /* Flash messages */
@@ -151,7 +167,7 @@ body {
 }
 
 .user-message .message-avatar {
-    background-color: #5c7cfa;
+    background-color: #20b2aa;
 }
 
 .message-text {
@@ -275,7 +291,144 @@ body {
 }
 
 .send-btn:hover {
-    background-color: #3a5a8a;
+    background-color: #006666;
+}
+
+/* Clone Library Styles */
+.clone-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.clone-card {
+    background-color: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    padding: 20px;
+    display: flex;
+    flex-direction: row;
+    transition: transform 0.2s, box-shadow 0.2s;
+    border: 1px solid #e0e0e0;
+    min-height: 120px;
+}
+
+.clone-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+}
+
+.clone-info {
+    flex: 3;
+    margin-right: 20px;
+}
+
+.clone-info h2 {
+    color: var(--primary-color);
+    margin-bottom: 5px;
+}
+
+.clone-info .role-tag {
+    display: inline-block;
+    background-color: #f0f7ff;
+    color: var(--primary-color);
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    margin-bottom: 10px;
+}
+
+.clone-role-display {
+    color: var(--secondary-color);
+    margin-top: 5px;
+    font-size: 0.9rem;
+}
+
+.clone-description {
+    color: var(--dark-color);
+    margin-top: 8px;
+    font-size: 0.9rem;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.persona-preview {
+    color: var(--secondary-color);
+    margin-bottom: 15px;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.clone-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+    justify-content: center;
+}
+
+.clone-actions .btn {
+    height: 38px; /* Fixed height for the buttons */
+    line-height: 18px; /* Adjust line height for vertical centering */
+    text-align: center;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0; /* Remove any margin that might affect height */
+    padding: 0 15px; /* Horizontal padding only */
+    box-sizing: border-box; /* Ensure padding doesn't affect height */
+}
+
+.action-buttons {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 20px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    background-color: #f9f9f9;
+    border-radius: var(--border-radius);
+    margin-top: 20px;
+}
+
+.empty-state p {
+    color: var(--secondary-color);
+    font-size: 1.1rem;
+}
+
+/* Danger Zone */
+.danger-zone {
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid #f8d7da;
+}
+
+.danger-zone h3 {
+    color: var(--danger-color);
+}
+
+.btn-danger {
+    background-color: var(--danger-color);
+}
+
+.btn-danger:hover {
+    background-color: #c82333;
+}
+
+.btn-secondary {
+    background-color: var(--secondary-color);
+}
+
+.btn-secondary:hover {
+    background-color: #5a6268;
 }
 
 /* Legacy styles for other pages */
@@ -348,13 +501,49 @@ textarea {
 }
 
 .btn:hover {
-    background-color: #3a5a8a;
+    background-color: #006666;
 }
 
 small {
     display: block;
     color: var(--secondary-color);
     margin-top: 5px;
+}
+
+/* Info Box Styling */
+.info-box {
+    margin-top: 20px;
+    padding: 15px;
+    background-color: #ffffff; /* Changed to white */
+    border: none; /* Removed border */
+    border-radius: var(--border-radius);
+}
+
+.info-box h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.info-box ol {
+    padding-left: 20px; /* Adjust left padding for the ordered list */
+    margin-bottom: 10px;
+}
+
+.info-box li {
+    margin-bottom: 5px;
+}
+
+/* Page Actions (for buttons at bottom) */
+.page-actions {
+    margin-top: 20px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.page-actions .btn {
+    min-width: 100px; /* Ensure buttons have a minimum width */
+    text-align: center;
 }
 
 /* Responsive adjustments */
@@ -385,6 +574,14 @@ small {
         width: 32px;
         height: 32px;
     }
+}
+
+/* Style for read-only fields */
+input[readonly],
+textarea[readonly] {
+    background-color: #e9ecef; /* Light gray background */
+    cursor: not-allowed; /* Indicate non-interactive */
+    opacity: 0.9; /* Slightly faded */
 }
 
 @media (max-width: 480px) {
