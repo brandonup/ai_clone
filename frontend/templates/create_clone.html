@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Clone - Create Clone</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Create New Clone</h1>
+
+        <div id="flash-messages" class="flash-messages" style="display: none;">
+            <!-- JS will populate this -->
+        </div>
+
+        <div class="card">
+            <h2>Clone Configuration</h2>
+            <p>Define your clone persona to set up your AI clone. You can optionally provide a Google Drive folder link containing your clone documents.</p>
+
+            <!-- Removed action and method -->
+            <form id="create-clone-form">
+                <div class="form-group">
+                    <label for="clone_name">Clone's Name:</label>
+                    <input type="text" name="clone_name" id="clone_name" placeholder="Enter the clone's name (e.g., 'Clone Jane', 'Blackbeard')" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="clone_role">Role:</label>
+                    <select name="clone_role" id="clone_role" required>
+                        <option value="" disabled selected>Select a Role...</option>
+                        <option value="Characters">Characters</option>
+                        <option value="Coaches">Coaches</option>
+                        <option value="Therapists">Therapists</option>
+                        <option value="Games">Games</option>
+                        <option value="Historical">Historical</option>
+                        <option value="Religion">Religion</option>
+                        <option value="Animals">Animals</option>
+                        <option value="Discussion">Discussion</option>
+                        <option value="Comedy">Comedy</option>
+                        <option value="Other">Other</option>
+                        <option value="Authors and books">Authors and books</option>
+                        <option value="Celebrities">Celebrities</option>
+                        <option value="Influencers">Influencers</option>
+                        <option value="Companions">Companions</option>
+                        <option value="Romantic">Romantic</option>
+                        <option value="Family">Family</option>
+                        <option value="Me!">Me!</option>
+                        <option value="Expert">Expert</option>
+                        <option value="Regular people">Regular people</option>
+                        <option value="CEO">CEO</option>
+                        <option value="Consultant">Consultant</option>
+                        <option value="Spokesperson">Spokesperson</option>
+                    </select>
+                    <small>Select the role that best fits your clone.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="clone_description">Clone Description:</label>
+                    <textarea name="clone_description" id="clone_description" rows="2" placeholder="Write a short description that will tell users about your bot. This will not impact the bot's behavior."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="clone_persona">Clone Persona Description:</label>
+                    <textarea name="clone_persona" id="clone_persona" rows="4" placeholder="Describe the clone persona (e.g., 'is a productivity expert who gives friendly, concise advice.')" required></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="drive_folder">Google Drive Folder Link (Optional):</label>
+                    <input type="url" name="drive_folder" id="drive_folder" placeholder="https://drive.google.com/drive/folders/...">
+                    <small>Paste the URL of a Google Drive folder containing your documents (optional). You can leave this field empty and the clone will still work.</small>
+                </div>
+            </form>
+            
+            <div class="info-box">
+                <h3>How to share your Google Drive folder:</h3>
+                <ol>
+                    <li>Create a folder in Google Drive and upload your clone documents</li>
+                    <li>Right-click the folder and select "Share"</li>
+                    <li>Set the folder to "Anyone with the link can view"</li>
+                    <li>Copy the link and paste it above</li>
+                </ol>
+                <p><strong>Supported formats:</strong> PDF, DOCX, TXT, Google Docs</p>
+            </div>
+        </div>
+        <div class="page-actions">
+             <!-- Button still triggers form submission, but JS intercepts it -->
+            <button type="submit" form="create-clone-form" id="submit-button" class="btn">Create Clone</button>
+            <!-- Link to frontend library page -->
+            <a href="{{ url_for('clone_library') }}" class="btn btn-secondary">Cancel</a>
+        </div>
+    </div>
+
+    <script>
+        const backendApiUrl = "{{ backend_api_url }}"; // Get URL from Flask
+        const form = document.getElementById('create-clone-form');
+        const submitButton = document.getElementById('submit-button');
+        const flashMessagesContainer = document.getElementById('flash-messages');
+
+        function displayFlashMessage(message, type = 'error') { // Default to error for this form
+            flashMessagesContainer.innerHTML = ''; // Clear previous messages
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flash-message flash-${type}`;
+            messageDiv.textContent = message;
+            flashMessagesContainer.appendChild(messageDiv);
+            flashMessagesContainer.style.display = 'block';
+            window.scrollTo(0, 0); // Scroll to top to see message
+        }
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault(); // Prevent default HTML form submission
+            submitButton.disabled = true; // Disable button during submission
+            submitButton.textContent = 'Creating...';
+            flashMessagesContainer.style.display = 'none'; // Hide old messages
+
+            if (!backendApiUrl) {
+                displayFlashMessage('Error: Backend API URL not configured.');
+                submitButton.disabled = false;
+                submitButton.textContent = 'Create Clone';
+                return;
+            }
+
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+
+            console.log("Submitting data:", data); // Debug log
+
+            try {
+                const response = await fetch(`${backendApiUrl}/api/clones`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data),
+                    credentials: 'include' // Send cookies if needed for session
+                });
+
+                const result = await response.json();
+
+                if (response.ok) { // Check for 2xx status codes
+                    console.log('Clone creation successful:', result);
+                    // Redirect based on ingestion status
+                    if (result.clone && result.clone.ingestion_status === 'pending') {
+                        window.location.href = `/processing/${result.clone.id}`; // Redirect to frontend processing page
+                    } else {
+                        // Optionally store a success message for the library page (e.g., using localStorage)
+                        localStorage.setItem('flashMessage', 'Clone created successfully!');
+                        window.location.href = '/library'; // Redirect to frontend library page
+                    }
+                } else {
+                    console.error('Clone creation failed:', result);
+                    displayFlashMessage(result.error || 'Failed to create clone. Please check the details and try again.');
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Create Clone';
+                }
+
+            } catch (error) {
+                console.error('Network or other error during clone creation:', error);
+                displayFlashMessage('An unexpected error occurred. Please check your network connection and try again.');
+                submitButton.disabled = false;
+                submitButton.textContent = 'Create Clone';
+            }
+        });
+
+         // Check for flash messages from previous page (e.g., after successful creation without processing)
+        document.addEventListener('DOMContentLoaded', () => {
+            const flashMessage = localStorage.getItem('flashMessage');
+            if (flashMessage) {
+                displayFlashMessage(flashMessage, 'success'); // Display as success
+                localStorage.removeItem('flashMessage'); // Clear after displaying
+            }
+        });
+
+    </script>
+</body>
+</html>

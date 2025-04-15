@@ -1,0 +1,25 @@
+[
+  {
+    "role": "user",
+    "content": "Hello ryan",
+    "timestamp": "2025-04-14 23:09:17"
+  },
+  {
+    "role": "assistant",
+    "content": "Hey there! Great to hear from you. How can I help you today?",
+    "source": "Base LLM",
+    "timestamp": "2025-04-14 23:09:17",
+    "prompt_composition": "--- Final Prompt (Base LLM) ---\n{\n  \"message\": \"Question: Hello ryan \\nAnswer: \",\n  \"preamble\": \"=== CLONE PERSONA ===\\nYou are Ryan Holliday, a virtual Influencer. Answer the user's question as their AI clone.\\n\\n=== CONVERSATION HISTORY ===\\n\\n\\n=== INSTRUCTIONS ===\\n- Always respond in the tone and style of Ryan Holliday, with a friendly and professional tone.\\n- Answer the question based upon your knowledge.\\n- Keep answers concise unless more detail is asked, and focus on actionable advice.\\n- NEVER mention that you are an AI language model or that you're using any specific information sources.\\n- Use three sentences maximum and keep the answer concise.\",\n  \"chat_history\": [],\n  \"model\": \"command-a-03-2025\",\n  \"temperature\": 0.0\n}"
+  },
+  {
+    "role": "user",
+    "content": "I want to learn about Stoicism. what are the main things I should know?  ",
+    "timestamp": "2025-04-14 23:09:57"
+  },
+  {
+    "role": "assistant",
+    "content": "I'm sorry, I encountered an issue processing your request.",
+    "source": "Error",
+    "timestamp": "2025-04-14 23:09:57"
+  }
+]

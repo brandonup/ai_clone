@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- Title will be set dynamically -->
+    <title>AI Clone - Manage Clone</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1 id="manage-title">Manage Clone</h1>
+
+        <div id="flash-messages" class="flash-messages" style="display: none;">
+            <!-- JS will populate this -->
+        </div>
+
+        <div id="loading-state" class="loading-state">Loading clone details...</div>
+
+        <div id="settings-card" class="card" style="display: none;">
+            <h2>Clone Settings</h2>
+            <p>Update your clone's settings below.</p>
+
+            <!-- Removed action and method -->
+            <form id="manage-clone-form">
+                <div class="form-group">
+                    <label for="clone_name">Clone's Name:</label>
+                    <input type="text" name="clone_name" id="clone_name" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="clone_role">Role:</label>
+                    <select name="clone_role" id="clone_role" required>
+                        <option value="" disabled>Select a Role...</option>
+                        <!-- Options will be populated by JS, but keep static list as fallback/reference -->
+                        <option value="Characters">Characters</option>
+                        <option value="Coaches">Coaches</option>
+                        <option value="Therapists">Therapists</option>
+                        <option value="Games">Games</option>
+                        <option value="Historical">Historical</option>
+                        <option value="Religion">Religion</option>
+                        <option value="Animals">Animals</option>
+                        <option value="Discussion">Discussion</option>
+                        <option value="Comedy">Comedy</option>
+                        <option value="Other">Other</option>
+                        <option value="Authors and books">Authors and books</option>
+                        <option value="Celebrities">Celebrities</option>
+                        <option value="Influencers">Influencers</option>
+                        <option value="Companions">Companions</option>
+                        <option value="Romantic">Romantic</option>
+                        <option value="Family">Family</option>
+                        <option value="Me!">Me!</option>
+                        <option value="Expert">Expert</option>
+                        <option value="Regular people">Regular people</option>
+                        <option value="CEO">CEO</option>
+                        <option value="Consultant">Consultant</option>
+                        <option value="Spokesperson">Spokesperson</option>
+                    </select>
+                    <small>Select the role that best fits your clone. Changing this may affect the enhanced persona.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="clone_description">Clone Description:</label>
+                    <textarea name="clone_description" id="clone_description" rows="2" placeholder="Write a short description that will tell users about your bot. This will not impact the bot's behavior."></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="original_persona">Original Clone Prompt:</label>
+                    <textarea name="original_persona" id="original_persona" rows="4" required></textarea>
+                    <small>This is the persona description you provided. Edit this field to update the clone's core instructions.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="enhanced_persona">Enhanced Clone Prompt (Read-Only):</label>
+                    <textarea name="enhanced_persona" id="enhanced_persona" rows="6" readonly></textarea>
+                    <small>This is the AI-enhanced version of your description, used during chat. It's automatically updated when you save changes to the original description.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="drive_folder">Google Drive Folder Link (Optional):</label>
+                    <input type="url" name="drive_folder" id="drive_folder">
+                    <small>Paste the URL of a Google Drive folder containing your documents (optional). You can leave this field empty and the clone will still work.</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="vectorstore_name">Vectorstore Name (Read-Only):</label>
+                    <input type="text" name="vectorstore_name" id="vectorstore_name" readonly>
+                    <small>This is the name of the vectorstore collection used by this clone. This field is read-only.</small>
+                </div>
+
+                <div class="form-group">
+                    <button type="submit" id="save-button" class="btn">Save Changes</button>
+                    <!-- Link to frontend library -->
+                    <a href="{{ url_for('clone_library') }}" class="btn btn-secondary">Back to Library</a>
+                </div>
+            </form>
+
+            <div class="danger-zone">
+                <h3>Danger Zone</h3>
+                <p>Deleting a clone is permanent and cannot be undone.</p>
+                <!-- Removed form, button now handled by JS -->
+                <button id="delete-button" class="btn btn-danger">Delete Clone</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const backendApiUrl = "{{ backend_api_url }}"; // Get URL from Flask
+        const cloneId = "{{ clone_id }}"; // Get clone_id from Flask route
+        const form = document.getElementById('manage-clone-form');
+        const saveButton = document.getElementById('save-button');
+        const deleteButton = document.getElementById('delete-button');
+        const flashMessagesContainer = document.getElementById('flash-messages');
+        const loadingState = document.getElementById('loading-state');
+        const settingsCard = document.getElementById('settings-card');
+        const manageTitle = document.getElementById('manage-title');
+
+        // Function to display messages
+        function displayFlashMessage(message, type = 'info') {
+            flashMessagesContainer.innerHTML = ''; // Clear previous
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flash-message flash-${type}`;
+            messageDiv.textContent = message;
+            flashMessagesContainer.appendChild(messageDiv);
+            flashMessagesContainer.style.display = 'block';
+            window.scrollTo(0, 0); // Scroll to top
+        }
+
+        // Function to populate form fields
+        function populateForm(cloneData) {
+            if (!cloneData) return;
+            document.title = `AI Clone - Manage ${cloneData.clone_name || 'Clone'}`;
+            manageTitle.textContent = `Manage Clone: ${cloneData.clone_name || ''}`;
+            form.elements['clone_name'].value = cloneData.clone_name || '';
+            form.elements['clone_role'].value = cloneData.clone_role || '';
+            form.elements['clone_description'].value = cloneData.clone_description || '';
+            form.elements['original_persona'].value = cloneData.original_persona || '';
+            form.elements['enhanced_persona'].value = cloneData.enhanced_persona || '';
+            form.elements['drive_folder'].value = cloneData.drive_folder || '';
+            form.elements['vectorstore_name'].value = cloneData.vectorstore_name || 'Not set';
+        }
+
+        // Fetch clone data on page load
+        async function fetchCloneDetails() {
+            loadingState.style.display = 'block';
+            settingsCard.style.display = 'none';
+            flashMessagesContainer.style.display = 'none';
+
+            if (!backendApiUrl) {
+                displayFlashMessage('Error: Backend API URL not configured.', 'error');
+                loadingState.textContent = 'Error: Backend API URL not configured.';
+                return;
+            }
+            if (!cloneId) {
+                 displayFlashMessage('Error: Clone ID missing.', 'error');
+                 loadingState.textContent = 'Error: Clone ID missing.';
+                 return;
+            }
+
+            try {
+                const response = await fetch(`${backendApiUrl}/api/clones/${cloneId}`, {
+                    credentials: 'include'
+                });
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: 'Failed to fetch clone details.' }));
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+                const cloneData = await response.json();
+                populateForm(cloneData);
+                loadingState.style.display = 'none';
+                settingsCard.style.display = 'block';
+
+            } catch (error) {
+                console.error('Error fetching clone details:', error);
+                loadingState.style.display = 'none';
+                displayFlashMessage(`Error loading clone details: ${error.message}`, 'error');
+            }
+        }
+
+        // Handle form submission (Update)
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            saveButton.disabled = true;
+            saveButton.textContent = 'Saving...';
+            flashMessagesContainer.style.display = 'none';
+
+            const formData = new FormData(form);
+            const data = Object.fromEntries(formData.entries());
+
+            try {
+                const response = await fetch(`${backendApiUrl}/api/clones/${cloneId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data),
+                    credentials: 'include'
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    console.log('Update successful:', result);
+                    displayFlashMessage('Clone updated successfully!', 'success');
+                    // Re-populate form with potentially updated data (like enhanced_persona)
+                    populateForm(result.clone);
+                } else {
+                    console.error('Update failed:', result);
+                    displayFlashMessage(result.error || 'Failed to update clone.', 'error');
+                }
+            } catch (error) {
+                console.error('Network or other error during update:', error);
+                displayFlashMessage('An unexpected error occurred during update.', 'error');
+            } finally {
+                saveButton.disabled = false;
+                saveButton.textContent = 'Save Changes';
+            }
+        });
+
+        // Handle Delete button click
+        deleteButton.addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to delete this clone? This action cannot be undone.')) {
+                return;
+            }
+
+            deleteButton.disabled = true;
+            deleteButton.textContent = 'Deleting...';
+            flashMessagesContainer.style.display = 'none';
+
+            try {
+                const response = await fetch(`${backendApiUrl}/api/clones/${cloneId}`, {
+                    method: 'DELETE',
+                    credentials: 'include'
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    console.log('Delete successful:', result);
+                    // Store success message for library page
+                    localStorage.setItem('flashMessage', 'Clone deleted successfully!');
+                    window.location.href = '/library'; // Redirect to frontend library
+                } else {
+                    console.error('Delete failed:', result);
+                    displayFlashMessage(result.error || 'Failed to delete clone.', 'error');
+                    deleteButton.disabled = false;
+                    deleteButton.textContent = 'Delete Clone';
+                }
+            } catch (error) {
+                console.error('Network or other error during delete:', error);
+                displayFlashMessage('An unexpected error occurred during deletion.', 'error');
+                deleteButton.disabled = false;
+                deleteButton.textContent = 'Delete Clone';
+            }
+        });
+
+        // Initial fetch when DOM is loaded
+        document.addEventListener('DOMContentLoaded', fetchCloneDetails);
+    </script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Clone - Processing</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        /* Add some specific styles for the processing page */
+        .processing-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 300px;
+            text-align: center;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: var(--primary-color);
+            animation: spin 1s ease infinite;
+            margin-bottom: 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #status-message {
+            margin-top: 15px;
+            color: var(--secondary-color);
+        }
+        #error-message {
+             margin-top: 10px;
+             color: var(--danger-color);
+             font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Processing Clone</h1>
+        <div class="card processing-container">
+            <div class="spinner"></div>
+            <h2>Your clone "{{ clone_name }}" is being created.</h2>
+            <p>Document ingestion is in progress. This can take 5 to 30 minutes depending on the number and size of documents.</p>
+            <p id="status-message">Checking status...</p>
+            <p id="error-message" style="display: none;"></p> {# Hidden by default #}
+            <p>You will be automatically redirected to the Clone Library when processing is complete.</p>
+        </div>
+    </div>
+
+    <script>
+        const backendApiUrl = "{{ backend_api_url }}"; // Get URL from Flask
+        const cloneId = "{{ clone_id }}";
+        const statusUrl = backendApiUrl ? `${backendApiUrl}/api/clone_status/${cloneId}` : null; // Construct API URL
+        const libraryUrl = "{{ url_for('clone_library') }}"; // Frontend library URL
+        const statusMessageElement = document.getElementById('status-message');
+        const errorMessageElement = document.getElementById('error-message');
+
+        function checkStatus() {
+            if (!statusUrl) {
+                statusMessageElement.textContent = "Error: Backend API URL not configured.";
+                errorMessageElement.style.display = 'block';
+                return; // Stop checking
+            }
+
+            fetch(statusUrl, { credentials: 'include' }) // Add credentials if session is needed
+                .then(response => {
+                    if (!response.ok) {
+                        // Try to get error message from response body
+                        return response.json().then(errData => {
+                            throw new Error(errData.message || `HTTP error! status: ${response.status}`);
+                        }).catch(() => {
+                             throw new Error(`HTTP error! status: ${response.status}`);
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    console.log("Status check:", data);
+                    // Display progress if available
+                    let progressText = '';
+                    if (data.files_attempted > 0) {
+                        progressText = ` (${data.files_processed || 0}/${data.files_attempted} files processed)`;
+                    }
+                    statusMessageElement.textContent = `Status: ${data.status}${progressText}...`;
+
+
+                    if (data.status === 'complete') {
+                        statusMessageElement.textContent = "Processing complete! Redirecting...";
+                        // Store success message for library page
+                        localStorage.setItem('flashMessage', 'Clone knowledge processed successfully!');
+                        window.location.href = libraryUrl; // Redirect to frontend library
+                    } else if (data.status === 'error') {
+                        statusMessageElement.textContent = "An error occurred during processing.";
+                        errorMessageElement.textContent = `Error details: ${data.error_message || 'Unknown error'}`;
+                        errorMessageElement.style.display = 'block';
+                        console.error("Ingestion process failed.");
+                        // Stop polling on error
+                    } else if (data.status === 'pending') {
+                        setTimeout(checkStatus, 10000); // Check again in 10 seconds
+                    } else {
+                         statusMessageElement.textContent = `Unknown status received: ${data.status}. Stopping checks.`;
+                         console.error(`Unknown status received: ${data.status}`);
+                         // Stop polling on unknown status
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching clone status:', error);
+                    statusMessageElement.textContent = "Error checking status. Please try refreshing or check the library later.";
+                    // Optionally stop polling on fetch error
+                });
+        }
+
+        // Start polling when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            setTimeout(checkStatus, 5000); // Initial check after 5 seconds
+        });
+    </script>
+</body>
+</html>

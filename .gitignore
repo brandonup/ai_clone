@@ -13,6 +13,8 @@ venv/
 env/
 ENV/
 ai_coach_env/
+ai_clone_env/
+ai_clone_env_backup/
 
 # Logs
 *.log

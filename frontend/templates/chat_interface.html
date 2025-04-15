@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Clone - Chat</title> <!-- Title updated dynamically -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <div>
+                <h1 id="clone-name-header">Loading...</h1>
+                <div id="role-tag-header" class="role-tag" style="display: none;"></div>
+            </div>
+            <div class="header-actions">
+                 <!-- Link to frontend library -->
+                <a href="{{ url_for('clone_library') }}" class="new-chat-btn">
+                    <i class="fas fa-list"></i> Clone Library
+                </a>
+                 <!-- Button handled by JS -->
+                <button id="new-chat-button" class="new-chat-btn">
+                    <i class="fas fa-plus"></i> New Chat
+                </button>
+            </div>
+        </div>
+
+        <div id="flash-messages" class="flash-messages" style="display: none;">
+            <!-- JS will populate this -->
+        </div>
+
+        <div class="chat-messages" id="chat-messages">
+            <!-- Messages will be loaded here by JavaScript -->
+            <div id="empty-chat-state" class="empty-chat" style="display: none;">
+                 <div class="empty-chat-icon"><i class="fas fa-comments"></i></div>
+                 <h2 id="empty-chat-title">Welcome!</h2>
+                 <p>Ask a question to start the conversation.</p>
+            </div>
+             <div id="loading-chat-state" class="loading-state">Loading chat...</div>
+        </div>
+
+        <div class="chat-input">
+             <!-- Removed action and method -->
+            <form id="chat-form">
+                <div class="input-container">
+                    <textarea name="question" id="question" rows="1" placeholder="Ask a question..." required disabled></textarea>
+                    <button type="submit" id="send-button" class="send-btn" disabled>
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const backendApiUrl = "{{ backend_api_url }}"; // Get URL from Flask
+        const chatMessagesContainer = document.getElementById('chat-messages');
+        const chatForm = document.getElementById('chat-form');
+        const questionTextarea = document.getElementById('question');
+        const sendButton = document.getElementById('send-button');
+        const newChatButton = document.getElementById('new-chat-button');
+        const cloneNameHeader = document.getElementById('clone-name-header');
+        const roleTagHeader = document.getElementById('role-tag-header');
+        const emptyChatState = document.getElementById('empty-chat-state');
+        const emptyChatTitle = document.getElementById('empty-chat-title');
+        const loadingChatState = document.getElementById('loading-chat-state');
+        const flashMessagesContainer = document.getElementById('flash-messages');
+
+        let currentConversationId = null;
+        let currentCloneName = 'Clone'; // Default
+
+        function displayFlashMessage(message, type = 'error') {
+            flashMessagesContainer.innerHTML = ''; // Clear previous
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flash-message flash-${type}`;
+            messageDiv.textContent = message;
+            flashMessagesContainer.appendChild(messageDiv);
+            flashMessagesContainer.style.display = 'block';
+            window.scrollTo(0, 0);
+        }
+
+        function scrollToBottom() {
+            chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+        }
+
+        function renderMessage(message) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('message');
+
+            const contentDiv = document.createElement('div');
+            contentDiv.classList.add('message-content');
+
+            const avatarDiv = document.createElement('div');
+            avatarDiv.classList.add('message-avatar');
+            const avatarIcon = document.createElement('i');
+            avatarIcon.classList.add('fas');
+
+            const textDiv = document.createElement('div');
+            textDiv.classList.add('message-text');
+            const textP = document.createElement('p');
+            textP.textContent = message.content; // Basic text rendering
+             // Consider using a library like 'marked' or 'DOMPurify' if you expect Markdown or need sanitization
+            textDiv.appendChild(textP);
+
+            if (message.role === 'user') {
+                messageDiv.classList.add('user-message');
+                avatarIcon.classList.add('fa-user');
+            } else { // assistant
+                messageDiv.classList.add('assistant-message');
+                avatarIcon.classList.add('fa-robot');
+
+                const infoDiv = document.createElement('div');
+                infoDiv.classList.add('message-info');
+
+                if (message.source) {
+                    const sourceSpan = document.createElement('span');
+                    sourceSpan.classList.add('source-tag');
+                    sourceSpan.textContent = `Source: ${message.source}`;
+                    infoDiv.appendChild(sourceSpan);
+                }
+                if (message.timestamp) {
+                    const timeSpan = document.createElement('span');
+                    timeSpan.classList.add('message-timestamp');
+                    timeSpan.textContent = message.timestamp;
+                    infoDiv.appendChild(timeSpan);
+                }
+                textDiv.appendChild(infoDiv);
+
+                // Optional: Display prompt composition if available (consider security implications)
+                // if (message.prompt_composition) { ... }
+            }
+
+            avatarDiv.appendChild(avatarIcon);
+            contentDiv.appendChild(avatarDiv);
+            contentDiv.appendChild(textDiv);
+            messageDiv.appendChild(contentDiv);
+
+            chatMessagesContainer.appendChild(messageDiv);
+        }
+
+        function renderHistory(history) {
+            chatMessagesContainer.innerHTML = ''; // Clear existing messages/states
+            if (history && history.length > 0) {
+                history.forEach(renderMessage);
+                emptyChatState.style.display = 'none';
+            } else {
+                // Show empty state if history is empty
+                emptyChatTitle.textContent = `Welcome to Clone ${currentCloneName}`;
+                emptyChatState.style.display = 'flex'; // Use flex for centering
+            }
+            loadingChatState.style.display = 'none';
+            scrollToBottom();
+        }
+
+        async function fetchSessionAndHistory() {
+            loadingChatState.style.display = 'block';
+            emptyChatState.style.display = 'none';
+            questionTextarea.disabled = true;
+            sendButton.disabled = true;
+            flashMessagesContainer.style.display = 'none';
+
+            if (!backendApiUrl) {
+                displayFlashMessage('Error: Backend API URL not configured.');
+                loadingChatState.textContent = 'Error: Backend API not configured.';
+                return;
+            }
+
+            try {
+                // 1. Fetch session info
+                const sessionResponse = await fetch(`${backendApiUrl}/api/session_info`, { credentials: 'include' });
+                if (!sessionResponse.ok) {
+                     // If session fetch fails, maybe redirect to library?
+                     console.error("Failed to fetch session info, redirecting to library.");
+                     window.location.href = '/library'; // Redirect to frontend library
+                     return; // Stop further execution
+                }
+                const sessionInfo = await sessionResponse.json();
+
+                if (!sessionInfo.active_clone_id) {
+                    console.log("No active clone selected, redirecting to library.");
+                    window.location.href = '/library'; // Redirect if no clone selected
+                    return;
+                }
+
+                // Update UI with clone info
+                currentConversationId = sessionInfo.conversation_id;
+                currentCloneName = sessionInfo.active_clone_name || 'Clone';
+                document.title = `Clone ${currentCloneName} - Chat`;
+                cloneNameHeader.textContent = currentCloneName;
+                if (sessionInfo.active_clone_role) {
+                    roleTagHeader.textContent = sessionInfo.active_clone_role;
+                    roleTagHeader.style.display = 'block';
+                } else {
+                    roleTagHeader.style.display = 'none';
+                }
+
+                // 2. Fetch initial conversation history (using a dummy /ask call or a dedicated history endpoint if available)
+                // For now, let's assume the history comes with the first /ask response or is empty initially.
+                // We'll render the empty state first.
+                renderHistory([]); // Render empty state initially
+
+                // Enable input
+                questionTextarea.disabled = false;
+                sendButton.disabled = false;
+                questionTextarea.focus();
+
+            } catch (error) {
+                console.error('Error loading chat session:', error);
+                loadingChatState.style.display = 'none';
+                displayFlashMessage(`Error loading chat: ${error.message}`, 'error');
+                 // Maybe offer a retry or link back to library
+            }
+        }
+
+        // Handle Form Submission (Send Message)
+        chatForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const question = questionTextarea.value.trim();
+            if (!question || !currentConversationId) {
+                return; // Ignore empty submissions or if session isn't ready
+            }
+
+            // Optimistically render user message
+            const userMessage = { role: 'user', content: question, timestamp: new Date().toLocaleString() };
+            renderMessage(userMessage);
+            scrollToBottom();
+
+            // Clear input and disable form
+            questionTextarea.value = '';
+            questionTextarea.style.height = 'auto'; // Reset height
+            questionTextarea.disabled = true;
+            sendButton.disabled = true;
+
+            // Optional: Show thinking indicator
+            const thinkingDiv = document.createElement('div');
+            thinkingDiv.className = 'message assistant-message thinking';
+            thinkingDiv.innerHTML = '<div class="message-content"><div class="message-avatar"><i class="fas fa-robot"></i></div><div class="message-text"><p><i>Thinking...</i></p></div></div>';
+            chatMessagesContainer.appendChild(thinkingDiv);
+            scrollToBottom();
+
+
+            try {
+                const response = await fetch(`${backendApiUrl}/api/ask`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question: question }),
+                    credentials: 'include'
+                });
+
+                // Remove thinking indicator regardless of success/failure
+                const thinkingIndicator = chatMessagesContainer.querySelector('.thinking');
+                if (thinkingIndicator) {
+                    thinkingIndicator.remove();
+                }
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    // The API now returns the full history, so re-render it
+                    renderHistory(result.conversation_history || []);
+                } else {
+                    console.error('Error asking question:', result);
+                    displayFlashMessage(result.error || 'Failed to get response from clone.', 'error');
+                    // Optionally remove the optimistic user message or add an error indicator
+                }
+
+            } catch (error) {
+                 // Remove thinking indicator on network error too
+                const thinkingIndicator = chatMessagesContainer.querySelector('.thinking');
+                if (thinkingIndicator) {
+                    thinkingIndicator.remove();
+                }
+                console.error('Network or other error sending message:', error);
+                displayFlashMessage('An network error occurred while sending your message.', 'error');
+            } finally {
+                // Re-enable form
+                questionTextarea.disabled = false;
+                sendButton.disabled = false;
+                questionTextarea.focus();
+            }
+        });
+
+        // Handle New Chat Button
+        newChatButton.addEventListener('click', async () => {
+            console.log("Starting new chat...");
+            newChatButton.disabled = true; // Prevent double clicks
+            flashMessagesContainer.style.display = 'none';
+
+            if (!backendApiUrl) {
+                 displayFlashMessage('Error: Backend API URL not configured.');
+                 newChatButton.disabled = false;
+                 return;
+            }
+
+            try {
+                 const response = await fetch(`${backendApiUrl}/api/new_chat`, {
+                     method: 'POST',
+                     headers: { 'Content-Type': 'application/json' },
+                     credentials: 'include'
+                 });
+                 const result = await response.json();
+
+                 if (response.ok) {
+                     console.log("New chat started:", result);
+                     currentConversationId = result.conversation_id; // Update conversation ID
+                     renderHistory([]); // Clear the chat display
+                     questionTextarea.disabled = false; // Ensure input is enabled
+                     sendButton.disabled = false;
+                     questionTextarea.focus();
+                 } else {
+                     console.error("Failed to start new chat:", result);
+                     displayFlashMessage(result.error || 'Failed to start new chat.', 'error');
+                 }
+            } catch (error) {
+                 console.error("Network error starting new chat:", error);
+                 displayFlashMessage('A network error occurred while starting a new chat.', 'error');
+            } finally {
+                 newChatButton.disabled = false;
+            }
+        });
+
+
+        // --- Existing Textarea Utils ---
+        questionTextarea.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+        });
+
+        questionTextarea.addEventListener('keydown', function(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                chatForm.requestSubmit(); // Use requestSubmit for better form handling
+            }
+        });
+
+        // --- Initial Load ---
+        document.addEventListener('DOMContentLoaded', fetchSessionAndHistory);
+
+    </script>
+</body>
+</html>

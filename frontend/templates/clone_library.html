@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Clone - Clone Library</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Clone Library</h1>
+
+        <div id="flash-messages" class="flash-messages" style="display: none;">
+            <!-- JS will populate this -->
+        </div>
+
+        <div class="action-buttons">
+            <!-- Link to the frontend route -->
+            <a href="{{ url_for('create_clone_page') }}" class="btn">Create New Clone</a>
+        </div>
+
+        <div id="clone-list-container">
+            <!-- Clone cards will be loaded here by JavaScript -->
+            <div class="loading-state">Loading clones...</div>
+        </div>
+
+        <div id="empty-state" class="empty-state" style="display: none;">
+            <p>You don't have any clones yet. Create your first clone to get started!</p>
+        </div>
+    </div>
+
+    <script>
+        const backendApiUrl = "{{ backend_api_url }}"; // Get URL from Flask
+        const cloneListContainer = document.getElementById('clone-list-container');
+        const emptyState = document.getElementById('empty-state');
+        const flashMessagesContainer = document.getElementById('flash-messages');
+
+        function displayFlashMessage(message, type = 'info') {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flash-message flash-${type}`; // Add type class if needed
+            messageDiv.textContent = message;
+            flashMessagesContainer.appendChild(messageDiv);
+            flashMessagesContainer.style.display = 'block';
+            // Optional: Auto-hide after some time
+            // setTimeout(() => { messageDiv.remove(); }, 5000);
+        }
+
+        async function fetchClones() {
+            if (!backendApiUrl) {
+                cloneListContainer.innerHTML = '<div class="error-state">Error: Backend API URL not configured.</div>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${backendApiUrl}/api/clones`, {
+                     credentials: 'include' // Include cookies for session management if needed by backend
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const clones = await response.json();
+
+                cloneListContainer.innerHTML = ''; // Clear loading state
+
+                if (clones && clones.length > 0) {
+                    const cloneListDiv = document.createElement('div');
+                    cloneListDiv.className = 'clone-list';
+
+                    clones.forEach(clone => {
+                        const card = document.createElement('div');
+                        card.className = 'clone-card';
+
+                        const infoDiv = document.createElement('div');
+                        infoDiv.className = 'clone-info';
+                        const nameH2 = document.createElement('h2');
+                        nameH2.textContent = clone.clone_name;
+                        infoDiv.appendChild(nameH2);
+
+                        if (clone.clone_description) {
+                            const descP = document.createElement('p');
+                            descP.className = 'clone-description';
+                            descP.textContent = clone.clone_description;
+                            infoDiv.appendChild(descP);
+                        }
+                         // Display ingestion status if pending or error
+                        if (clone.ingestion_status === 'pending') {
+                            const statusP = document.createElement('p');
+                            statusP.className = 'clone-status clone-status-pending';
+                            statusP.textContent = 'Status: Processing knowledge...';
+                            infoDiv.appendChild(statusP);
+                        } else if (clone.ingestion_status === 'error') {
+                            const statusP = document.createElement('p');
+                            statusP.className = 'clone-status clone-status-error';
+                            statusP.textContent = `Status: Ingestion Error (${clone.ingestion_error || 'Unknown error'})`;
+                            infoDiv.appendChild(statusP);
+                        }
+
+
+                        const actionsDiv = document.createElement('div');
+                        actionsDiv.className = 'clone-actions';
+
+                        // Link to frontend manage page
+                        const manageLink = document.createElement('a');
+                        manageLink.href = `/manage/${clone.id}`; // Use frontend route
+                        manageLink.className = 'btn btn-secondary';
+                        manageLink.textContent = 'Manage';
+                        actionsDiv.appendChild(manageLink);
+
+                        // Button to select clone and go to chat (handled by JS)
+                        const chatButton = document.createElement('button');
+                        chatButton.className = 'btn';
+                        chatButton.textContent = 'Chat';
+                        chatButton.onclick = () => selectCloneAndChat(clone.id);
+                        actionsDiv.appendChild(chatButton);
+
+
+                        card.appendChild(infoDiv);
+                        card.appendChild(actionsDiv);
+                        cloneListDiv.appendChild(card);
+                    });
+                    cloneListContainer.appendChild(cloneListDiv);
+                    emptyState.style.display = 'none';
+                } else {
+                    emptyState.style.display = 'block';
+                }
+
+            } catch (error) {
+                console.error('Error fetching clones:', error);
+                cloneListContainer.innerHTML = '<div class="error-state">Error loading clones. Please try again later.</div>';
+                emptyState.style.display = 'none';
+            }
+        }
+
+        async function selectCloneAndChat(cloneId) {
+             console.log(`Selecting clone: ${cloneId}`);
+             flashMessagesContainer.innerHTML = ''; // Clear previous messages
+             flashMessagesContainer.style.display = 'none';
+
+             if (!backendApiUrl) {
+                 displayFlashMessage('Error: Backend API URL not configured.', 'error');
+                 return;
+             }
+
+             try {
+                 const response = await fetch(`${backendApiUrl}/api/select_clone/${cloneId}`, {
+                     method: 'POST',
+                     headers: {
+                         'Content-Type': 'application/json',
+                     },
+                     credentials: 'include' // Send cookies
+                 });
+
+                 const result = await response.json();
+
+                 if (response.ok) {
+                     console.log('Clone selected successfully:', result.message);
+                     // Redirect to the frontend chat page
+                     window.location.href = '/chat'; // Use frontend route
+                 } else {
+                     console.error('Error selecting clone:', result.error);
+                     displayFlashMessage(`Error selecting clone: ${result.error || 'Unknown error'}`, 'error');
+                 }
+             } catch (error) {
+                 console.error('Network or other error selecting clone:', error);
+                 displayFlashMessage('Failed to select clone due to a network error.', 'error');
+             }
+         }
+
+        // Fetch clones when the page loads
+        document.addEventListener('DOMContentLoaded', fetchClones);
+    </script>
+</body>
+</html>
