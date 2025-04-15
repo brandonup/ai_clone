@@ -7,28 +7,28 @@ logger = logging.getLogger(__name__)
 
 # Category to Role Mapping
 CATEGORY_TO_ROLE_MAP = {
+    "Animals": "Animal",
+    "Authors and books": "Author",
+    "CEO": "CEO",
+    "Celebrities": "Celebrity",
     "Characters": "Character",
     "Coaches": "Coach",
-    "Therapists": "Therapist",
+    "Comedy": "Comedian",
+    "Companions": "Companion",
+    "Consultants": "Consultant",
+    "Discussion": "Conversation partner",
+    "Expert": "Expert",
+    "Family": "Family member",
     "Games": "Game",
     "Historical": "Historical Figure",
-    "Religion": "Religious person",
-    "Animals": "Animal",
-    "Discussion": "Conversation partner",
-    "Comedy": "Comedian",
-    "Other": "Undisclosed",
-    "Authors and books": "Author",
-    "Celebrities": "Celebrity",
     "Influencers": "Influencer",
-    "Companions": "Companion",
-    "Romantic": "Romantic interest",
-    "Family": "Family member",
     "Me!": "Themselves",
-    "Expert": "Expert",
+    "Other": "Undisclosed",
     "Regular people": "Regular person",
-    "CEO": "CEO",
-    "Consultant": "Consultant",
-    "Spokesperson": "Spokesperson"
+    "Religion": "Religious person",
+    "Romantic": "Romantic interest",
+    "Spokespersons": "Spokesperson",
+    "Therapists": "Therapist"
 }
 
 CLONES_FILE = 'clones.json'

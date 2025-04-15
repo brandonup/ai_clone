@@ -48,7 +48,7 @@
             <p>Document ingestion is in progress. This can take 5 to 30 minutes depending on the number and size of documents.</p>
             <p id="status-message">Checking status...</p>
             <p id="error-message" style="display: none;"></p> {# Hidden by default #}
-            <p>You will be automatically redirected to the Clone Library when processing is complete.</p>
+            <p>You will be automatically redirected to the Clone Directory when processing is complete.</p>
         </div>
     </div>
 
@@ -56,7 +56,7 @@
         const backendApiUrl = "{{ backend_api_url }}"; // Get URL from Flask
         const cloneId = "{{ clone_id }}";
         const statusUrl = backendApiUrl ? `${backendApiUrl}/api/clone_status/${cloneId}` : null; // Construct API URL
-        const libraryUrl = "{{ url_for('clone_library') }}"; // Frontend library URL
+        const directoryUrl = "{{ url_for('clone_directory') }}"; // Frontend directory URL
         const statusMessageElement = document.getElementById('status-message');
         const errorMessageElement = document.getElementById('error-message');
 
@@ -91,9 +91,9 @@
 
                     if (data.status === 'complete') {
                         statusMessageElement.textContent = "Processing complete! Redirecting...";
-                        // Store success message for library page
+                        // Store success message for directory page
                         localStorage.setItem('flashMessage', 'Clone knowledge processed successfully!');
-                        window.location.href = libraryUrl; // Redirect to frontend library
+                        window.location.href = directoryUrl; // Redirect to frontend directory
                     } else if (data.status === 'error') {
                         statusMessageElement.textContent = "An error occurred during processing.";
                         errorMessageElement.textContent = `Error details: ${data.error_message || 'Unknown error'}`;

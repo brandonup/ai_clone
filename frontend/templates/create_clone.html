@@ -22,11 +22,11 @@
             <form id="create-clone-form">
                 <div class="form-group">
                     <label for="clone_name">Clone's Name:</label>
-                    <input type="text" name="clone_name" id="clone_name" placeholder="Enter the clone's name (e.g., 'Clone Jane', 'Blackbeard')" required>
+                    <input type="text" name="clone_name" id="clone_name" placeholder="The name users will see in the clone directory (e.g., 'Clone Jane', 'Blackbeard')" required>
                 </div>
 
                 <div class="form-group">
-                    <label for="clone_role">Role:</label>
+                    <label for="clone_role">Category:</label>
                     <select name="clone_role" id="clone_role" required>
                         <option value="" disabled selected>Select a Role...</option>
                         <option value="Characters">Characters</option>
@@ -52,7 +52,7 @@
                         <option value="Consultant">Consultant</option>
                         <option value="Spokesperson">Spokesperson</option>
                     </select>
-                    <small>Select the role that best fits your clone.</small>
+                    <small>Select the category that best fits your clone.</small>
                 </div>
 
                 <div class="form-group">
@@ -86,8 +86,8 @@
         <div class="page-actions">
              <!-- Button still triggers form submission, but JS intercepts it -->
             <button type="submit" form="create-clone-form" id="submit-button" class="btn">Create Clone</button>
-            <!-- Link to frontend library page -->
-            <a href="{{ url_for('clone_library') }}" class="btn btn-secondary">Cancel</a>
+            <!-- Link to frontend directory page -->
+            <a href="{{ url_for('clone_directory') }}" class="btn btn-secondary">Cancel</a>
         </div>
     </div>
 
@@ -143,9 +143,9 @@
                     if (result.clone && result.clone.ingestion_status === 'pending') {
                         window.location.href = `/processing/${result.clone.id}`; // Redirect to frontend processing page
                     } else {
-                        // Optionally store a success message for the library page (e.g., using localStorage)
+                        // Optionally store a success message for the directory page (e.g., using localStorage)
                         localStorage.setItem('flashMessage', 'Clone created successfully!');
-                        window.location.href = '/library'; // Redirect to frontend library page
+                        window.location.href = '/directory'; // Redirect to frontend directory page
                     }
                 } else {
                     console.error('Clone creation failed:', result);

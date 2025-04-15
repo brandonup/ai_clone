@@ -15,9 +15,9 @@
                 <div id="role-tag-header" class="role-tag" style="display: none;"></div>
             </div>
             <div class="header-actions">
-                 <!-- Link to frontend library -->
-                <a href="{{ url_for('clone_library') }}" class="new-chat-btn">
-                    <i class="fas fa-list"></i> Clone Library
+                 <!-- Link to frontend directory -->
+                <a href="{{ url_for('clone_directory') }}" class="new-chat-btn">
+                    <i class="fas fa-list"></i> Clone Directory
                 </a>
                  <!-- Button handled by JS -->
                 <button id="new-chat-button" class="new-chat-btn">
@@ -32,7 +32,7 @@
 
         <div class="chat-messages" id="chat-messages">
             <!-- Messages will be loaded here by JavaScript -->
-            <div id="empty-chat-state" class="empty-chat" style="display: none;">
+            <div id="empty-chat-state" class="empty-chat"> <!-- REMOVED style="display: none;" -->
                  <div class="empty-chat-icon"><i class="fas fa-comments"></i></div>
                  <h2 id="empty-chat-title">Welcome!</h2>
                  <p>Ask a question to start the conversation.</p>
@@ -140,22 +140,28 @@
         }
 
         function renderHistory(history) {
-            chatMessagesContainer.innerHTML = ''; // Clear existing messages/states
-            if (history && history.length > 0) {
-                history.forEach(renderMessage);
-                emptyChatState.style.display = 'none';
-            } else {
-                // Show empty state if history is empty
+            // Selectively remove only message elements (user or assistant)
+            const messagesToRemove = chatMessagesContainer.querySelectorAll('.message.user-message, .message.assistant-message');
+            messagesToRemove.forEach(msg => msg.remove());
+
+            loadingChatState.style.display = 'none'; // Hide loading indicator
+            emptyChatState.classList.remove('empty-chat--visible'); // Ensure empty state is hidden initially
+
+            // Check if history is truly empty (null, undefined, or empty array)
+            if (!history || history.length === 0) {
+                // Show empty state using the CSS class
                 emptyChatTitle.textContent = `Welcome to Clone ${currentCloneName}`;
-                emptyChatState.style.display = 'flex'; // Use flex for centering
+                emptyChatState.classList.add('empty-chat--visible'); // Explicitly add class only if needed
+            } else {
+                 // Render messages (empty state remains hidden)
+                history.forEach(renderMessage); // renderMessage appends to chatMessagesContainer
             }
-            loadingChatState.style.display = 'none';
             scrollToBottom();
         }
 
         async function fetchSessionAndHistory() {
             loadingChatState.style.display = 'block';
-            emptyChatState.style.display = 'none';
+            // Removed: emptyChatState.style.display = 'none';
             questionTextarea.disabled = true;
             sendButton.disabled = true;
             flashMessagesContainer.style.display = 'none';
@@ -170,16 +176,17 @@
                 // 1. Fetch session info
                 const sessionResponse = await fetch(`${backendApiUrl}/api/session_info`, { credentials: 'include' });
                 if (!sessionResponse.ok) {
-                     // If session fetch fails, maybe redirect to library?
-                     console.error("Failed to fetch session info, redirecting to library.");
-                     window.location.href = '/library'; // Redirect to frontend library
+                     // If session fetch fails, maybe redirect to directory?
+                     console.error("Failed to fetch session info, redirecting to directory.");
+                     window.location.href = '/directory'; // Redirect to frontend directory
                      return; // Stop further execution
                 }
                 const sessionInfo = await sessionResponse.json();
+                // Removed console.log for sessionInfo
 
                 if (!sessionInfo.active_clone_id) {
-                    console.log("No active clone selected, redirecting to library.");
-                    window.location.href = '/library'; // Redirect if no clone selected
+                    // Removed console.log
+                    window.location.href = '/directory'; // Redirect if no clone selected
                     return;
                 }
 
@@ -195,10 +202,10 @@
                     roleTagHeader.style.display = 'none';
                 }
 
-                // 2. Fetch initial conversation history (using a dummy /ask call or a dedicated history endpoint if available)
-                // For now, let's assume the history comes with the first /ask response or is empty initially.
-                // We'll render the empty state first.
-                renderHistory([]); // Render empty state initially
+                // 2. Render initial conversation history (assuming it's included in sessionInfo)
+                const initialHistory = sessionInfo.conversation_history || [];
+                // Removed console.log for history length
+                renderHistory(initialHistory); // Use history from session info, default to empty array
 
                 // Enable input
                 questionTextarea.disabled = false;

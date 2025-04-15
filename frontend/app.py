@@ -36,13 +36,13 @@ def index():
     # In a pure SPA, this might serve the main index.html
     # For this multi-page Flask setup, redirecting is fine.
     # We need the backend URL available in the template context
-    return render_template('clone_library.html', backend_api_url=BACKEND_API_URL)
+    return render_template('clone_directory.html', backend_api_url=BACKEND_API_URL) # Renamed template
 
-@app.route('/library')
-def clone_library():
-    """Serves the clone library page."""
+@app.route('/directory') # Renamed route
+def clone_directory(): # Renamed function
+    """Serves the clone directory page."""
     # The actual list of clones will be fetched by JavaScript using the backend API URL
-    return render_template('clone_library.html', backend_api_url=BACKEND_API_URL)
+    return render_template('clone_directory.html', backend_api_url=BACKEND_API_URL) # Renamed template
 
 @app.route('/create')
 def create_clone_page():
@@ -95,6 +95,6 @@ def health_check():
 
 if __name__ == "__main__":
     # For Cloud Run, the entrypoint will be defined in the Dockerfile (e.g., using gunicorn)
-    # Run on a different port than the backend (e.g., 5000)
+    # Run on a different port than the backend (e.g., 5002)
     logger.info(f"Starting Flask development server for frontend. Backend API URL: {BACKEND_API_URL}")
-    app.run(debug=True, port=5000, host='0.0.0.0', use_reloader=True)
+    app.run(debug=True, port=5002, host='0.0.0.0', use_reloader=True) # Changed port to 5002

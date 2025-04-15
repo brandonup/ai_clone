@@ -115,20 +115,33 @@ body {
     padding: 20px;
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    background-color: #f9f9f9;
+    /* Removed gap: 20px; */
+    background-color: #f9f9f9; /* Light gray */
 }
 
 /* Empty chat state */
 .empty-chat {
-    display: flex;
+    display: none; /* Hide by default */
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100%;
+    flex-grow: 1; /* Use flex-grow instead of height */
     color: var(--secondary-color);
     text-align: center;
     padding: 20px;
+}
+
+/* Loading state (hidden by default) */
+.loading-state {
+    display: none;
+    text-align: center;
+    padding: 20px;
+    color: var(--secondary-color);
+}
+
+/* Helper class to make it visible */
+.empty-chat--visible {
+    display: flex !important; /* Override the default 'none' and other potential conflicts */
 }
 
 .empty-chat-icon {
@@ -489,14 +502,19 @@ textarea {
 }
 
 .btn {
-    display: inline-block;
+    display: inline-flex; /* Use inline-flex for alignment */
+    align-items: center; /* Vertically center content */
+    justify-content: center; /* Horizontally center content */
+    height: 38px; /* Set a fixed height */
+    box-sizing: border-box; /* Ensure padding doesn't add to height */
     background-color: var(--primary-color);
     color: white;
-    padding: 10px 15px;
+    padding: 0 15px; /* Horizontal padding only */
     border: none;
     border-radius: var(--border-radius);
     cursor: pointer;
     font-size: 16px;
+    text-decoration: none; /* Remove underline from <a> tags */
     transition: background-color 0.3s;
 }
 

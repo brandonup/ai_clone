@@ -29,7 +29,7 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="clone_role">Role:</label>
+                    <label for="clone_role">Category:</label>
                     <select name="clone_role" id="clone_role" required>
                         <option value="" disabled>Select a Role...</option>
                         <!-- Options will be populated by JS, but keep static list as fallback/reference -->
@@ -90,8 +90,8 @@
 
                 <div class="form-group">
                     <button type="submit" id="save-button" class="btn">Save Changes</button>
-                    <!-- Link to frontend library -->
-                    <a href="{{ url_for('clone_library') }}" class="btn btn-secondary">Back to Library</a>
+                    <!-- Link to frontend directory -->
+                    <a href="{{ url_for('clone_directory') }}" class="btn btn-secondary">Back to Directory</a>
                 </div>
             </form>
 
@@ -235,9 +235,9 @@
 
                 if (response.ok) {
                     console.log('Delete successful:', result);
-                    // Store success message for library page
+                    // Store success message for directory page
                     localStorage.setItem('flashMessage', 'Clone deleted successfully!');
-                    window.location.href = '/library'; // Redirect to frontend library
+                    window.location.href = '/directory'; // Redirect to frontend directory
                 } else {
                     console.error('Delete failed:', result);
                     displayFlashMessage(result.error || 'Failed to delete clone.', 'error');
