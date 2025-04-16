@@ -390,15 +390,43 @@ def clone_status_api(clone_id):
 @app.route('/api/clones/<clone_id>', methods=['DELETE'])
 def delete_clone_api(clone_id):
     """API endpoint to delete a clone."""
-    # Consider adding Qdrant collection deletion here if desired
+    # Get the clone data before deletion to access vectorstore_name
+    clone = get_clone_by_id(clone_id)
+    if not clone:
+        return jsonify({"error": "Clone not found"}), 404
+    
+    # Get the vectorstore_name (collection name) for this clone
+    vectorstore_name = clone.get('vectorstore_name')
+    
+    # Delete documents from Ragie.ai
+    deletion_result = {"status": "skipped", "message": "Document deletion skipped"}
+    try:
+        # Import the delete_clone_documents function
+        from utils.ragie_utils import delete_clone_documents
+        
+        # Delete documents associated with this clone
+        logger.info(f"Deleting documents for clone {clone_id} with vectorstore_name {vectorstore_name}")
+        deletion_result = delete_clone_documents(vectorstore_name)
+        logger.info(f"Document deletion result: {deletion_result}")
+    except ImportError:
+        logger.error("Could not import delete_clone_documents function")
+    except Exception as e:
+        logger.error(f"Error deleting documents for clone {clone_id}: {str(e)}")
+    
+    # Delete the clone data
     if delete_clone_data(clone_id):
         # Clear active clone from session if it was the one deleted
         if session.get('active_clone_id') == clone_id:
             session.pop('active_clone_id', None)
             session.pop('conversation_id', None) # Also clear conversation
-        return jsonify({"message": "Clone deleted successfully"})
+        
+        # Return success with document deletion info
+        return jsonify({
+            "message": "Clone deleted successfully",
+            "document_deletion": deletion_result
+        })
     else:
-        return jsonify({"error": "Error deleting clone"}), 500
+        return jsonify({"error": "Error deleting clone", "document_deletion": deletion_result}), 500
 
 
 @app.route('/api/select_clone/<clone_id>', methods=['POST'])

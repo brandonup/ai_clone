@@ -327,11 +327,15 @@ def retrieve_node(state: GraphState):
         return state
 
     try:
-        # Call the query_ragie function
-        # Pass config if query_ragie is updated to use it, otherwise it's ignored
-        print(f"--- Querying Ragie.ai for: '{question}' ---")
-        documents = query_ragie(question) # Add config=config if needed by query_ragie
-        print(f"--- Retrieved {len(documents)} documents from Ragie.ai ---")
+        # Get the vectorstore_name (clone_id) from the state
+        vectorstore_name = state.get("vectorstore_name")
+        if not vectorstore_name:
+            print("!!! WARNING: No vectorstore_name (clone_id) provided in state. Querying without clone filter. !!!")
+        
+        # Call the query_ragie function with clone_id
+        print(f"--- Querying Ragie.ai for: '{question}' with clone_id: {vectorstore_name} ---")
+        documents = query_ragie(question, clone_id=vectorstore_name)
+        print(f"--- Retrieved {len(documents)} documents from Ragie.ai for clone: {vectorstore_name} ---")
 
         # Ensure documents are LangChain Documents (query_ragie should return them, but double-check)
         processed_documents = []
