@@ -28,12 +28,19 @@ def ingest_document(file_content, filename, collection_name=None, delete_after_i
     
     logger.info(f"Ingesting document: {filename}")
     
-    # Convert to string if bytes
+    # Convert to string if bytes and sanitize the text
     if isinstance(file_content, bytes):
-        processed_content = file_content
+        # Decode bytes to string
+        text_content = file_content.decode('utf-8', errors='replace')
+        # Sanitize the text
+        sanitized_text = sanitize_text(text_content)
+        # Convert back to bytes
+        processed_content = sanitized_text.encode('utf-8')
     else:
-        # Convert to bytes if string
-        processed_content = file_content.encode('utf-8')
+        # Sanitize the text
+        sanitized_text = sanitize_text(file_content)
+        # Convert to bytes
+        processed_content = sanitized_text.encode('utf-8')
     
     # Store a local copy of the document
     doc_path = None
@@ -220,3 +227,76 @@ def sanitize_text(text):
     text = re.sub(r'(\w)\.([A-Z])', r'\1. \2', text)
     
     return text.strip()
+
+
+def query_ragie(query: str, top_k: int = 5) -> list:
+    """
+    Query Ragie.ai to retrieve relevant documents.
+
+    Args:
+        query (str): The user's query.
+        top_k (int): The maximum number of documents to retrieve.
+
+    Returns:
+        list: A list of LangChain Document objects.
+    """
+    ragie_api_key = os.getenv("RAGIE_API_KEY")
+    if not ragie_api_key:
+        logger.error("RAGIE_API_KEY environment variable not set for querying.")
+        return []
+
+    logger.info(f"Querying Ragie.ai with: '{query}' (top_k={top_k})")
+
+    try:
+        with Ragie(auth=ragie_api_key) as r_client:
+            # Assuming a search method exists, adjust if the actual method is different
+            # We might need to specify filters if Ragie supports per-clone data separation
+            # For now, we'll assume a general search across ingested documents.
+            search_request = {
+                "query": query,
+                "top_k": top_k,
+                # Add any necessary filters here if Ragie supports them, e.g.,
+                # "filter": {"scope": "coach_data"} # Example filter
+            }
+            logger.debug(f"Ragie search request: {search_request}")
+            response = r_client.search.create(request=search_request) # Adjust method if needed
+
+            # Process the response (assuming response.results is a list of hits)
+            documents = []
+            if hasattr(response, 'results') and response.results:
+                logger.info(f"Received {len(response.results)} results from Ragie.")
+                for result in response.results:
+                    # Extract content and metadata (adjust based on actual Ragie response structure)
+                    content = getattr(result, 'text', '')
+                    metadata = getattr(result, 'metadata', {})
+                    score = getattr(result, 'score', None) # Get score if available
+
+                    # Ensure metadata is a dictionary
+                    if not isinstance(metadata, dict):
+                        metadata = {"source_data": str(metadata)} # Convert non-dict metadata
+
+                    # Add score to metadata if available
+                    if score is not None:
+                        metadata['score'] = score
+                    metadata['source'] = 'ragie.ai' # Indicate the source
+
+                    # Create LangChain Document
+                    if content:
+                        from langchain_core.documents import Document # Local import
+                        documents.append(Document(page_content=content, metadata=metadata))
+                    else:
+                         logger.warning(f"Ragie result skipped due to empty content. Metadata: {metadata}")
+
+            else:
+                logger.info("No results received from Ragie.")
+
+            return documents
+
+    except AttributeError:
+        logger.error("The 'ragie' client object might not have a 'search.create' method. Please check the Ragie library documentation for the correct query method.")
+        return []
+    except Exception as e:
+        logger.error(f"Error querying Ragie.ai: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return []

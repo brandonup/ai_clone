@@ -95,7 +95,14 @@ def create_new_qdrant_collection(collection_name: str) -> bool:
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, supports_credentials=True) # Enable CORS for all routes, allowing credentials
+# Add these lines for session cookie configuration:
+app.config.update(
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=False,  # Must be False for HTTP
+    SESSION_COOKIE_HTTPONLY=True, # Good practice
+    SESSION_COOKIE_DOMAIN='localhost' # <<< ADD THIS
+)
+CORS(app, supports_credentials=True) # Keep CORS after config
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 
@@ -404,10 +411,16 @@ def select_clone_api(clone_id):
     # Set the active clone ID in the session
     session['active_clone_id'] = clone_id
     # Start a new conversation when selecting a clone
-    session['conversation_id'] = str(uuid.uuid4())
-    logger.info(f"Selected clone {clone_id} and started new conversation {session['conversation_id']}")
+    new_conversation_id = str(uuid.uuid4()) # Store in a variable
+    session['conversation_id'] = new_conversation_id
+    logger.info(f"Selected clone {clone_id} and started new conversation {new_conversation_id}")
 
-    return jsonify({"message": f"Clone {clone_id} selected", "clone_name": clone.get('clone_name')})
+    # Return the new conversation ID along with other info
+    return jsonify({
+        "message": f"Clone {clone_id} selected",
+        "clone_name": clone.get('clone_name'),
+        "conversation_id": new_conversation_id # <<< ADD THIS
+    })
 
 
 @app.route('/api/new_chat', methods=['POST'])
@@ -427,11 +440,16 @@ def new_chat_api():
 @app.route('/api/ask', methods=['POST'])
 def ask_api():
     """API endpoint to handle user questions and generate answers."""
-    active_clone = get_active_clone_from_session()
+    data = request.json
+    clone_id = data.get('clone_id') # <<< GET CLONE ID FROM REQUEST
+    if not clone_id:
+        return jsonify({"error": "No clone ID provided"}), 400
+
+    active_clone = get_clone_by_id(clone_id) # Use clone_id from request
     if not active_clone:
         return jsonify({"error": "No active clone selected"}), 400
 
-    data = request.json
+    question = data.get('question')
     question = data.get('question')
     if not question:
         return jsonify({"error": "No question provided"}), 400

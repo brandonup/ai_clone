@@ -1,12 +1,13 @@
 import os
-import requests
+import requests # Re-added for direct Serper calls
 import pprint
-import json # Added import
+import json # Re-added for Serper payload
 from typing import List, Optional, Any
 from typing_extensions import TypedDict
 
 from dotenv import load_dotenv
 from langchain.schema import Document
+# from langchain_community.utilities import GoogleSearchAPIWrapper # Removed Google Search Wrapper
 from langchain_cohere import ChatCohere # Use Cohere for LLM
 from langchain_openai import OpenAIEmbeddings # Use OpenAI for embeddings to match vector dimensions
 from langchain_core.prompts import ChatPromptTemplate
@@ -14,17 +15,21 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic.v1 import BaseModel, Field # Use pydantic v1 compatibility namespace as suggested by warning
 from langchain_core.messages import HumanMessage, AIMessage # Added AIMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain_qdrant import QdrantVectorStore # Import newer non-deprecated class
-from qdrant_client import QdrantClient
+# from langchain_qdrant import QdrantVectorStore # Removed QdrantVectorStore import
+# from qdrant_client import QdrantClient # Removed QdrantClient import (global client kept for now)
 from langgraph.graph import END, StateGraph, START
+from .ragie_utils import query_ragie # Import the new Ragie query function
 
 # Load environment variables
 load_dotenv()
 
 # --- Configuration ---
 COHERE_API_KEY = os.getenv("COHERE_API_KEY")
+RAGIE_API_KEY = os.getenv("RAGIE_API_KEY") # Added Ragie API Key check
 LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
-SERPER_API_KEY = os.getenv("SERPER_API_KEY") # Corrected variable name
+SERPER_API_KEY = os.getenv("SERPER_API_KEY") # Re-added Serper Key
+# GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") # Removed Google API Key
+# GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID") # Removed Google CSE ID
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 # QDRANT_COLLECTION_NAME = "clone_docs_d7ba27c0-a08b-4462-a732-2e36ffebd6e2" # Removed global default
@@ -37,7 +42,7 @@ if LANGCHAIN_API_KEY:
 
 # --- Tool Definitions ---
 
-# Serper Search Function (using requests)
+# Serper Search Function (using requests) - Re-added
 def serper_search(query: str, api_key: str) -> List[dict]:
     """Performs a web search using the Serper.dev API."""
     serper_api_endpoint = "https://google.serper.dev/search"
@@ -114,10 +119,11 @@ llm = ChatCohere(model="command-r", temperature=0, api_key=COHERE_API_KEY)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=OPENAI_API_KEY)
 
-# --- Qdrant Client Initialization (Global) ---
+# --- Qdrant Client Initialization (Global - Kept for now, but retrieval node will use Ragie) ---
 # Initialize only the client globally, vectorstore/retriever will be per-request
 try:
-    print("--- Initializing Qdrant client globally ---")
+    print("--- Initializing Qdrant client globally (Note: Retrieval node now uses Ragie) ---")
+    from qdrant_client import QdrantClient # Import locally if needed
     qdrant_client = QdrantClient(
         url=QDRANT_URL,
         api_key=QDRANT_API_KEY,
@@ -127,14 +133,14 @@ try:
     print("--- Successfully initialized global Qdrant client ---")
 except Exception as e:
     print(f"!!! ERROR initializing global Qdrant client: {e} !!!")
-    print("Qdrant client initialization failed. RAG functionality will be unavailable.")
+    print("Qdrant client initialization failed. RAG functionality might be affected if Qdrant is used elsewhere.")
     qdrant_client = None # Set client to None if initialization fails
 
 # --- Router Definition ---
 class WebSearchTool(BaseModel): # Renamed for clarity
     """
     The internet search tool (Serper.dev). Use this for questions about current events, general knowledge,
-    or topics NOT related to Paul Graham's essays on startups, entrepreneurship, business, innovation, etc.
+    or topics NOT related to the primary knowledge base.
     """
     query: str = Field(description="The query to use when searching the internet with Serper.dev.")
 
@@ -307,82 +313,56 @@ def fallback_prompt(x):
 # --- Graph Nodes ---
 
 def retrieve_node(state: GraphState):
-    """Retrieve documents from the specified Qdrant vectorstore collection."""
-    print("---RETRIEVE FROM VECTORSTORE---")
+    """Retrieve documents using the Ragie.ai API."""
+    print("---RETRIEVE FROM RAGIE.AI---")
     question = state["question"]
-    config = state.get("config")
-    vectorstore_name = state.get("vectorstore_name") # Get collection name from state
+    config = state.get("config") # Keep config for potential future use in query_ragie
     documents = []
 
-    if not vectorstore_name:
-        print("!!! ERROR: vectorstore_name not found in state for retrieval node !!!")
-        return {"documents": [], "question": question, "source_path": "vectorstore_error"}
-
-    # Check if the global Qdrant client is available
-    if qdrant_client is None:
-        print("!!! ERROR: Global Qdrant client not initialized. Cannot retrieve. !!!")
-        return {"documents": [], "question": question, "source_path": "vectorstore_error"}
+    # Check if Ragie API key is available
+    if not RAGIE_API_KEY:
+        print("!!! ERROR: RAGIE_API_KEY not set. Cannot retrieve from Ragie.ai. !!!")
+        state["documents"] = []
+        state["source_path"] = "ragie_error"
+        return state
 
     try:
-        # Initialize VectorStore and Retriever specifically for this request/collection
-        print(f"--- Initializing Qdrant vectorstore for collection: {vectorstore_name} ---")
-        request_vectorstore = QdrantVectorStore(
-            client=qdrant_client, # Use the global client
-            collection_name=vectorstore_name, # Use collection name from state
-            embedding=embeddings, # Use global embeddings
-            content_payload_key="text",
-            metadata_payload_key="metadata"
-        )
-        request_retriever = request_vectorstore.as_retriever()
-        print(f"--- Retrieving from collection: {vectorstore_name} ---")
-        documents = request_retriever.invoke(question, config=config)
-        print(f"--- Retrieved {len(documents)} documents from {vectorstore_name} ---")
+        # Call the query_ragie function
+        # Pass config if query_ragie is updated to use it, otherwise it's ignored
+        print(f"--- Querying Ragie.ai for: '{question}' ---")
+        documents = query_ragie(question) # Add config=config if needed by query_ragie
+        print(f"--- Retrieved {len(documents)} documents from Ragie.ai ---")
 
-        # Debug: Print document contents and ensure page_content is populated
+        # Ensure documents are LangChain Documents (query_ragie should return them, but double-check)
         processed_documents = []
         if documents:
-            print("--- Processing Retrieved Documents ---")
+            print("--- Processing Retrieved Documents from Ragie ---")
             for i, doc in enumerate(documents):
                 if isinstance(doc, Document):
-                    # Try to get content from page_content first
-                    content = doc.page_content
-                    # If page_content is empty, try getting it from metadata payload['text']
-                    if not content and doc.metadata and 'payload' in doc.metadata and isinstance(doc.metadata['payload'], dict) and 'text' in doc.metadata['payload']:
-                        print(f"--- Doc {i+1}: page_content empty, using payload['text'] ---")
-                        content = doc.metadata['payload']['text']
-                        doc.page_content = content # Update the document object
-                    elif not content:
-                         print(f"--- Doc {i+1}: page_content and payload['text'] are empty or missing ---")
-
-                    print(f"Doc {i+1} (Document object): {content[:200]}...") # Print snippet
+                    print(f"Doc {i+1} (RAGie): {doc.page_content[:200]}...") # Print snippet
                     print(f"Doc {i+1} metadata: {doc.metadata}")
-                    processed_documents.append(doc) # Add the potentially updated doc
+                    processed_documents.append(doc)
                 else:
-                    # Handle non-Document objects if necessary (though retriever should return Documents)
+                    # Handle unexpected format from query_ragie if necessary
                     print(f"Doc {i+1} (not a Document object): {str(doc)}")
-                    processed_documents.append(Document(page_content=str(doc))) # Convert to Document
-
-            # Print document types
-            print("--- Document Types After Processing ---")
-            for i, doc in enumerate(processed_documents):
-                print(f"Doc {i+1} type: {type(doc)}")
+                    processed_documents.append(Document(page_content=str(doc), metadata={"source": "ragie.ai", "error": "unexpected_format"}))
         else:
-            print(f"!!! NO DOCUMENTS RETRIEVED from {vectorstore_name} !!!")
+            print(f"!!! NO DOCUMENTS RETRIEVED from Ragie.ai !!!")
 
-        # Pass through other state variables
+        # Update state
         state["documents"] = processed_documents
-        state["source_path"] = "vectorstore"
+        state["source_path"] = "ragie.ai" # Update source path
         return state
 
     except Exception as e:
-        print(f"!!! ERROR retrieving from collection {vectorstore_name}: {e} !!!")
+        print(f"!!! ERROR retrieving from Ragie.ai: {e} !!!")
         import traceback
         traceback.print_exc()
         # Fall through to return error state
 
     # Return error state if retrieval failed
     state["documents"] = []
-    state["source_path"] = "vectorstore_error"
+    state["source_path"] = "ragie_error" # Update source path for error
     return state
 
 
@@ -400,28 +380,59 @@ def base_llm_node(state: GraphState):
     source_path = "base_llm_cohere"
 
     # Get the dynamically bound LLM chain from the state if available, otherwise create it
+    print("--- Checking for existing llm_chain in state ---") # New log
     current_llm_chain = state.get("llm_chain")
     if not current_llm_chain:
-         # This path might be taken if base_llm is called directly from router
-         print("--- Creating dynamic fallback LLM chain in base_llm_node ---")
-         dynamic_fallback_preamble = get_fallback_preamble(
-             clone_name=state.get("clone_name", "AI Clone"),
-             clone_role=state.get("clone_role", "Assistant"),
-             persona=state.get("persona", ""),
-             conversation_history=state.get("conversation_history_str", "")
-         )
-         dynamic_fallback_llm = fallback_llm.bind(preamble=dynamic_fallback_preamble)
-         current_llm_chain = fallback_prompt | dynamic_fallback_llm | StrOutputParser()
+         print("--- llm_chain not found, creating dynamic fallback LLM chain ---") # Modified log
+         try: # Add try-except around dynamic creation
+             dynamic_fallback_preamble = get_fallback_preamble(
+                 clone_name=state.get("clone_name", "AI Clone"),
+                 clone_role=state.get("clone_role", "Assistant"),
+                 persona=state.get("persona", ""),
+                 conversation_history=state.get("conversation_history_str", "")
+             )
+             print("--- Dynamic preamble created ---") # New log
+             dynamic_fallback_llm = fallback_llm.bind(preamble=dynamic_fallback_preamble)
+             print("--- Dynamic LLM bound ---") # New log
+             current_llm_chain = fallback_prompt | dynamic_fallback_llm | StrOutputParser()
+             print("--- Dynamic LLM chain constructed ---") # New log
+         except Exception as chain_creation_e:
+              print(f"!!! ERROR creating dynamic fallback chain: {chain_creation_e} !!!")
+              import traceback
+              traceback.print_exc()
+              # Cannot proceed without a chain
+              state["generation"] = "Error: Failed to prepare fallback mechanism."
+              state["documents"] = []
+              state["source_path"] = "internal_error"
+              return state
+    else:
+        print("--- Found existing llm_chain in state ---") # New log
 
+    # Check if chain exists before invoking
+    if not current_llm_chain:
+         print("!!! ERROR: Fallback LLM chain is still missing after check/creation !!!")
+         state["generation"] = "Error: Internal configuration error for fallback."
+         state["documents"] = []
+         state["source_path"] = "internal_error"
+         return state
 
     # Invoke Cohere chain
-    generation = current_llm_chain.invoke(fallback_input, config=config)
+    print(f"--- Invoking fallback LLM chain for question: {question} ---") # Add log
+    try:
+        generation = current_llm_chain.invoke(fallback_input, config=config)
+        print(f"--- Fallback LLM chain invocation successful. Generation: {generation[:100]}... ---") # Add log
+    except Exception as e:
+        print(f"!!! ERROR during fallback LLM chain invocation: {e} !!!") # Add log
+        import traceback
+        traceback.print_exc()
+        generation = "Error: Fallback LLM invocation failed." # Set error message
 
     # Update state
     state["generation"] = generation
     state["documents"] = [] # No documents used
-    state["prompt_composition"] = prompt_composition_placeholder
-    state["source_path"] = source_path
+    state["prompt_composition"] = prompt_composition_placeholder # Placeholder
+    state["source_path"] = source_path # source_path defined earlier in the function
+    print("--- Exiting base_llm_node ---") # Add log
     return state
 
 
@@ -542,24 +553,24 @@ def grade_documents_node(state: GraphState):
 
 def web_search_node(state: GraphState):
     """Web search based on the question using Serper.dev."""
-    print("---WEB SEARCH (Serper)---") # Updated print statement
+    print("---WEB SEARCH (Serper)---") # Reverted print statement
     question = state["question"]
     config = state.get("config")
 
-    if not SERPER_API_KEY: # Use correct variable
+    if not SERPER_API_KEY: # Check for Serper key again
         print("---WEB SEARCH: SERPER_API_KEY not set. Skipping.---")
         state["documents"] = []
         state["source_path"] = "web_search_error"
         return state # Indicate error
 
-    # Perform web search using the updated function
-    search_results = serper_search(question, SERPER_API_KEY) # Use correct variable and function
+    # Perform web search using the re-added function
+    search_results = serper_search(question, SERPER_API_KEY) # Use Serper function
 
     # Format results into LangChain Documents
     web_docs = []
     if search_results:
         for result in search_results:
-            # Adjust keys based on actual SerpDev response structure
+            # Adjust keys based on actual Serper response structure
             content = result.get("snippet", result.get("title", ""))
             metadata = {"source": "web_search", "url": result.get("link", "")}
             if content:
@@ -577,45 +588,45 @@ def web_search_node(state: GraphState):
 # --- Graph Edges ---
 
 def route_question_edge(state: GraphState):
-    """Route question to web search, vectorstore, or LLM fallback."""
+    """Route question to web search, Ragie.ai, or LLM fallback."""
     print("---ROUTE QUESTION---")
     question = state["question"]
     config = state.get("config")
 
-    # Check if Qdrant client is available
-    if qdrant_client is None:
-        print("---ROUTE: Qdrant client not available, checking if web search is possible---")
-        if SERPER_API_KEY:
-            print("---ROUTE: Using web search as Qdrant client is not available---")
-            return "web_search"
-        else:
-            print("---ROUTE: Using Base LLM as neither Qdrant nor web search are available---") # Updated print
-            return "base_llm" # Route to renamed node
-
-    # If Qdrant is available, use the router to decide
+    # Use the router to decide the primary source
     source = question_router.invoke({"question": question}, config=config)
 
     # If the router doesn't choose a specific tool, default to BaseLLMTool
-    if not source.tool_calls:
-        print("---ROUTE: No specific tool called by router, using Base LLM---")
-        return "base_llm" # Default to base_llm
-
-    # Always take the first tool call if multiple are suggested
-    datasource = source.tool_calls[0]["name"]
-
-    if datasource == "WebSearchTool": # Use correct tool name
-        print("---ROUTE: Question to Web Search (Serper)---") # Updated print
-        return "web_search"
-    elif datasource == "VectorstoreTool":
-        print("---ROUTE: Question to Vectorstore---")
-        return "vectorstore"
-    elif datasource == "BaseLLMTool": # Handle BaseLLMTool
-        print("---ROUTE: Question to Base LLM---")
-        return "base_llm"
+    tool_to_use = "base_llm" # Default
+    if source.tool_calls:
+        datasource = source.tool_calls[0]["name"]
+        if datasource == "WebSearchTool":
+            tool_to_use = "web_search"
+        elif datasource == "VectorstoreTool":
+            # Check if Ragie is available before routing to retrieve
+            if RAGIE_API_KEY:
+                tool_to_use = "vectorstore" # Edge name remains 'vectorstore', points to retrieve_node
+            else:
+                print("---ROUTE: Router chose Vectorstore, but RAGIE_API_KEY is missing. Falling back to Base LLM.---")
+                tool_to_use = "base_llm"
+        elif datasource == "BaseLLMTool":
+            tool_to_use = "base_llm"
+        else:
+            print(f"---ROUTE: Unknown tool '{datasource}', using Base LLM as fallback---")
+            tool_to_use = "base_llm"
     else:
-        # Should not happen with the defined tools, but fallback just in case
-        print(f"---ROUTE: Unknown tool '{datasource}', using Base LLM as fallback---") # Updated print
-        return "base_llm" # Fallback to base_llm
+         print("---ROUTE: No specific tool called by router, using Base LLM---")
+         tool_to_use = "base_llm"
+
+    # Print final routing decision
+    if tool_to_use == "web_search":
+        print("---ROUTE: Question to Web Search (Serper)---")
+    elif tool_to_use == "vectorstore":
+        print("---ROUTE: Question to Ragie.ai (via retrieve node)---")
+    elif tool_to_use == "base_llm":
+        print("---ROUTE: Question to Base LLM---")
+
+    return tool_to_use
 
 def decide_to_generate_edge(state: GraphState):
     """Determines whether to generate an answer or fallback to web search."""
@@ -736,12 +747,12 @@ workflow.add_conditional_edges(
     route_question_edge,
     {
         "web_search": "web_search",
-        "vectorstore": "retrieve",
-        "base_llm": "base_llm", # Match the return value from route_question_edge
+        "vectorstore": "retrieve", # Edge name stays the same, points to retrieve_node (now using Ragie)
+        "base_llm": "base_llm",
     },
 )
 
-# After retrieving from vectorstore, grade the documents
+# After retrieving (from Ragie now), grade the documents
 workflow.add_edge("retrieve", "grade_documents")
 
 # After grading, decide if docs are relevant enough to generate, or fallback to web search
@@ -938,7 +949,7 @@ def run_adaptive_rag(question: str, clone_name: str = "AI Clone", clone_role: st
             }
             final_prompt_composition = f"--- Final Prompt (Base LLM) ---\n{json.dumps(api_payload, indent=2)}"
 
-        elif final_source_path in ["vectorstore", "web_search", "vectorstore_error", "base_llm_fallback"]: # RAG path (even if docs were empty/error)
+        elif final_source_path in ["ragie.ai", "web_search", "ragie_error", "vectorstore_error", "base_llm_fallback"]: # RAG path (even if docs were empty/error) - Added ragie.ai/ragie_error
              # Reconstruct RAG prompt payload
              try:
                  message_content = rag_prompt({"question": question, "documents": final_documents}).messages[0].content
