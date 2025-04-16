@@ -397,21 +397,33 @@ def delete_clone_api(clone_id):
     
     # Get the vectorstore_name (collection name) for this clone
     vectorstore_name = clone.get('vectorstore_name')
+    logger.info(f"DELETE API: Found clone {clone_id} with vectorstore_name {vectorstore_name}")
     
     # Delete documents from Ragie.ai
     deletion_result = {"status": "skipped", "message": "Document deletion skipped"}
     try:
         # Import the delete_clone_documents function
-        from utils.ragie_utils import delete_clone_documents
+        logger.info("DELETE API: Attempting to import delete_clone_documents function")
+        try:
+            from utils.ragie_utils import delete_clone_documents
+            logger.info("DELETE API: Successfully imported delete_clone_documents function")
+        except ImportError as ie:
+            logger.error(f"DELETE API: ImportError when importing delete_clone_documents: {ie}")
+            raise
+        except Exception as e:
+            logger.error(f"DELETE API: Unexpected error when importing delete_clone_documents: {e}")
+            raise
         
         # Delete documents associated with this clone
-        logger.info(f"Deleting documents for clone {clone_id} with vectorstore_name {vectorstore_name}")
+        logger.info(f"DELETE API: Calling delete_clone_documents for clone {clone_id} with vectorstore_name {vectorstore_name}")
         deletion_result = delete_clone_documents(vectorstore_name)
-        logger.info(f"Document deletion result: {deletion_result}")
-    except ImportError:
-        logger.error("Could not import delete_clone_documents function")
+        logger.info(f"DELETE API: Document deletion result: {deletion_result}")
+    except ImportError as ie:
+        logger.error(f"DELETE API: Could not import delete_clone_documents function: {ie}")
     except Exception as e:
-        logger.error(f"Error deleting documents for clone {clone_id}: {str(e)}")
+        logger.error(f"DELETE API: Error deleting documents for clone {clone_id}: {str(e)}")
+        import traceback
+        logger.error(f"DELETE API: Traceback: {traceback.format_exc()}")
     
     # Delete the clone data
     if delete_clone_data(clone_id):

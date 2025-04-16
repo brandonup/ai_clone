@@ -327,19 +327,24 @@ def delete_clone_documents(clone_id):
     Returns:
         dict: Status of the deletion operation
     """
+    logger.info(f"DELETE_DOCS: Function called with clone_id: {clone_id}")
+    
     if not clone_id:
-        logger.error("No clone ID provided for document deletion")
+        logger.error("DELETE_DOCS: No clone ID provided for document deletion")
         return {"status": "error", "message": "No clone ID provided"}
         
     ragie_api_key = os.getenv("RAGIE_API_KEY")
     if not ragie_api_key:
-        logger.error("RAGIE_API_KEY environment variable not set for document deletion")
+        logger.error("DELETE_DOCS: RAGIE_API_KEY environment variable not set for document deletion")
         return {"status": "error", "message": "RAGIE_API_KEY not set"}
     
-    logger.info(f"Attempting to delete all documents for clone: {clone_id}")
+    logger.info(f"DELETE_DOCS: Attempting to delete all documents for clone: {clone_id}")
     
     try:
+        logger.info(f"DELETE_DOCS: Creating Ragie client with API key: {ragie_api_key[:4]}...")
         with Ragie(auth=ragie_api_key) as r_client:
+            logger.info(f"DELETE_DOCS: Ragie client created successfully")
+            
             # First, we need to list all documents that match the clone_id
             # This assumes Ragie has a list/search method for documents
             try:
@@ -349,11 +354,36 @@ def delete_clone_documents(clone_id):
                     "filter": {"clone_id": clone_id}
                 }
                 
+                logger.info(f"DELETE_DOCS: Attempting to list documents with filter: {list_request}")
+                
+                # Check if the documents attribute exists
+                if not hasattr(r_client, 'documents'):
+                    logger.error("DELETE_DOCS: Ragie client does not have 'documents' attribute")
+                    # Print all available attributes for debugging
+                    logger.info(f"DELETE_DOCS: Available attributes: {dir(r_client)}")
+                    return {"status": "error", "message": "Ragie client does not have 'documents' attribute"}
+                
+                # Check if the list method exists
+                if not hasattr(r_client.documents, 'list'):
+                    logger.error("DELETE_DOCS: Ragie client documents does not have 'list' method")
+                    # Print all available attributes for debugging
+                    logger.info(f"DELETE_DOCS: Available document methods: {dir(r_client.documents)}")
+                    raise AttributeError("documents.list method not found")
+                
                 # Attempt to list documents
                 documents = r_client.documents.list(request=list_request)
+                logger.info(f"DELETE_DOCS: Successfully listed documents: {documents}")
                 
-                if not documents or not hasattr(documents, 'results') or not documents.results:
-                    logger.info(f"No documents found for clone {clone_id}")
+                if not documents:
+                    logger.info(f"DELETE_DOCS: No documents returned for clone {clone_id}")
+                    return {"status": "success", "message": "No documents returned", "count": 0}
+                
+                if not hasattr(documents, 'results'):
+                    logger.error(f"DELETE_DOCS: Documents response does not have 'results' attribute: {documents}")
+                    return {"status": "error", "message": "Invalid response format from Ragie", "response": str(documents)}
+                
+                if not documents.results:
+                    logger.info(f"DELETE_DOCS: No documents found for clone {clone_id}")
                     return {"status": "success", "message": "No documents found to delete", "count": 0}
                 
                 # Track deletion results
@@ -364,17 +394,28 @@ def delete_clone_documents(clone_id):
                 for doc in documents.results:
                     doc_id = getattr(doc, 'id', None)
                     if not doc_id:
-                        logger.warning(f"Document without ID found for clone {clone_id}, skipping")
+                        logger.warning(f"DELETE_DOCS: Document without ID found for clone {clone_id}, skipping")
                         failed_count += 1
                         continue
-                        
+                    
+                    logger.info(f"DELETE_DOCS: Attempting to delete document {doc_id}")
+                    
                     try:
+                        # Check if delete method exists
+                        if not hasattr(r_client.documents, 'delete'):
+                            logger.error("DELETE_DOCS: Ragie client documents does not have 'delete' method")
+                            # Print all available attributes for debugging
+                            logger.info(f"DELETE_DOCS: Available document methods: {dir(r_client.documents)}")
+                            raise AttributeError("documents.delete method not found")
+                        
                         # Delete the document
                         r_client.documents.delete(id=doc_id)
                         deleted_count += 1
-                        logger.info(f"Deleted document {doc_id} for clone {clone_id}")
+                        logger.info(f"DELETE_DOCS: Successfully deleted document {doc_id} for clone {clone_id}")
                     except Exception as del_e:
-                        logger.error(f"Failed to delete document {doc_id}: {str(del_e)}")
+                        logger.error(f"DELETE_DOCS: Failed to delete document {doc_id}: {str(del_e)}")
+                        import traceback
+                        logger.error(f"DELETE_DOCS: Traceback: {traceback.format_exc()}")
                         failed_count += 1
                 
                 return {
@@ -384,9 +425,9 @@ def delete_clone_documents(clone_id):
                     "failed_count": failed_count
                 }
                 
-            except AttributeError:
+            except AttributeError as ae:
                 # If the list method doesn't exist, try an alternative approach
-                logger.warning("documents.list method not found, trying alternative approach")
+                logger.warning(f"DELETE_DOCS: {ae}, trying alternative approach")
                 
                 # Try to use search to find documents by clone_id
                 search_request = {
@@ -395,10 +436,35 @@ def delete_clone_documents(clone_id):
                     "top_k": 1000  # Get a large number of results
                 }
                 
-                search_results = r_client.search.create(request=search_request)
+                logger.info(f"DELETE_DOCS: Attempting to search documents with request: {search_request}")
                 
-                if not search_results or not hasattr(search_results, 'results') or not search_results.results:
-                    logger.info(f"No documents found for clone {clone_id} using search")
+                # Check if search method exists
+                if not hasattr(r_client, 'search'):
+                    logger.error("DELETE_DOCS: Ragie client does not have 'search' attribute")
+                    # Print all available attributes for debugging
+                    logger.info(f"DELETE_DOCS: Available attributes: {dir(r_client)}")
+                    return {"status": "error", "message": "Ragie client does not have 'search' attribute"}
+                
+                # Check if create method exists
+                if not hasattr(r_client.search, 'create'):
+                    logger.error("DELETE_DOCS: Ragie client search does not have 'create' method")
+                    # Print all available attributes for debugging
+                    logger.info(f"DELETE_DOCS: Available search methods: {dir(r_client.search)}")
+                    return {"status": "error", "message": "Ragie client search does not have 'create' method"}
+                
+                search_results = r_client.search.create(request=search_request)
+                logger.info(f"DELETE_DOCS: Search results: {search_results}")
+                
+                if not search_results:
+                    logger.info(f"DELETE_DOCS: No search results returned for clone {clone_id}")
+                    return {"status": "success", "message": "No search results returned", "count": 0}
+                
+                if not hasattr(search_results, 'results'):
+                    logger.error(f"DELETE_DOCS: Search results does not have 'results' attribute: {search_results}")
+                    return {"status": "error", "message": "Invalid search response format from Ragie", "response": str(search_results)}
+                
+                if not search_results.results:
+                    logger.info(f"DELETE_DOCS: No documents found for clone {clone_id} using search")
                     return {"status": "success", "message": "No documents found to delete", "count": 0}
                 
                 # Track deletion results
@@ -409,17 +475,28 @@ def delete_clone_documents(clone_id):
                 for result in search_results.results:
                     doc_id = getattr(result, 'document_id', None)
                     if not doc_id:
-                        logger.warning(f"Search result without document_id found for clone {clone_id}, skipping")
+                        logger.warning(f"DELETE_DOCS: Search result without document_id found for clone {clone_id}, skipping")
                         failed_count += 1
                         continue
-                        
+                    
+                    logger.info(f"DELETE_DOCS: Attempting to delete document {doc_id} from search results")
+                    
                     try:
+                        # Check if delete method exists
+                        if not hasattr(r_client.documents, 'delete'):
+                            logger.error("DELETE_DOCS: Ragie client documents does not have 'delete' method")
+                            # Print all available attributes for debugging
+                            logger.info(f"DELETE_DOCS: Available document methods: {dir(r_client.documents)}")
+                            raise AttributeError("documents.delete method not found")
+                        
                         # Delete the document
                         r_client.documents.delete(id=doc_id)
                         deleted_count += 1
-                        logger.info(f"Deleted document {doc_id} for clone {clone_id}")
+                        logger.info(f"DELETE_DOCS: Successfully deleted document {doc_id} for clone {clone_id}")
                     except Exception as del_e:
-                        logger.error(f"Failed to delete document {doc_id}: {str(del_e)}")
+                        logger.error(f"DELETE_DOCS: Failed to delete document {doc_id}: {str(del_e)}")
+                        import traceback
+                        logger.error(f"DELETE_DOCS: Traceback: {traceback.format_exc()}")
                         failed_count += 1
                 
                 return {
@@ -430,7 +507,7 @@ def delete_clone_documents(clone_id):
                 }
     
     except Exception as e:
-        logger.error(f"Error deleting documents for clone {clone_id}: {str(e)}")
+        logger.error(f"DELETE_DOCS: Error deleting documents for clone {clone_id}: {str(e)}")
         import traceback
-        traceback.print_exc()
+        logger.error(f"DELETE_DOCS: Traceback: {traceback.format_exc()}")
         return {"status": "error", "message": f"Error: {str(e)}"}
