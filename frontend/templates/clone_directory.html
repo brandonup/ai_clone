@@ -30,45 +30,51 @@
     </div>
 
     <script>
-        const backendApiUrl = "{{ backend_api_url }}"; // Get URL from Flask
+        console.log('[Clone Directory] Script block started.');
+
+        const backendApiUrl = "{{ backend_api_url }}";
         const cloneListContainer = document.getElementById('clone-list-container');
         const emptyState = document.getElementById('empty-state');
         const flashMessagesContainer = document.getElementById('flash-messages');
 
         function displayFlashMessage(message, type = 'info') {
             const messageDiv = document.createElement('div');
-            messageDiv.className = `flash-message flash-${type}`; // Add type class if needed
+            messageDiv.className = `flash-message flash-${type}`;
             messageDiv.textContent = message;
             flashMessagesContainer.appendChild(messageDiv);
             flashMessagesContainer.style.display = 'block';
-            // Optional: Auto-hide after some time
-            // setTimeout(() => { messageDiv.remove(); }, 5000);
         }
 
         async function fetchClones() {
+            console.log('[fetchClones] Function started.');
             if (!backendApiUrl) {
+                console.error('[fetchClones] Error: Backend API URL not configured.');
                 cloneListContainer.innerHTML = '<div class="error-state">Error: Backend API URL not configured.</div>';
                 return;
             }
 
             try {
+                console.log('[fetchClones] Attempting to fetch clones list...');
                 const response = await fetch(`${backendApiUrl}/api/clones`, {
-                     credentials: 'include' // Include cookies for session management if needed by backend
+                     credentials: 'include'
                 });
+                console.log(`[fetchClones] Clones list fetch response status: ${response.status}`);
 
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
 
                 const clones = await response.json();
+                console.log('[fetchClones] Clones list fetched:', clones);
 
-                cloneListContainer.innerHTML = ''; // Clear loading state
+                cloneListContainer.innerHTML = '';
 
                 if (clones && clones.length > 0) {
                     const cloneListDiv = document.createElement('div');
                     cloneListDiv.className = 'clone-list';
 
-                    clones.forEach(clone => {
+                    clones.forEach((clone, index) => {
+                        console.log(`[fetchClones] Processing clone index ${index}:`, clone.id);
                         const card = document.createElement('div');
                         card.className = 'clone-card';
 
@@ -84,7 +90,6 @@
                             descP.textContent = clone.clone_description;
                             infoDiv.appendChild(descP);
                         }
-                         // Display ingestion status if pending or error
                         if (clone.ingestion_status === 'pending') {
                             const statusP = document.createElement('p');
                             statusP.className = 'clone-status clone-status-pending';
@@ -97,24 +102,23 @@
                             infoDiv.appendChild(statusP);
                         }
 
-
                         const actionsDiv = document.createElement('div');
                         actionsDiv.className = 'clone-actions';
 
-                        // Link to frontend manage page
+                        // Manage link
                         const manageLink = document.createElement('a');
-                        manageLink.href = `/manage/${clone.id}`; // Use frontend route
+                        manageLink.href = '{{ url_for("manage_clone_page", clone_id="CLONE_ID") }}'.replace('CLONE_ID', clone.id);
                         manageLink.className = 'btn btn-secondary';
                         manageLink.textContent = 'Manage';
                         actionsDiv.appendChild(manageLink);
 
-                        // Button to select clone and go to chat (handled by JS)
-                        const chatButton = document.createElement('button');
-                        chatButton.className = 'btn';
-                        chatButton.textContent = 'Chat';
-                        chatButton.onclick = () => selectCloneAndChat(clone.id);
-                        actionsDiv.appendChild(chatButton);
-
+                        // *** NEW APPROACH: Two-step process with direct links ***
+                        // Step 1: Create a link to select the clone
+                        const selectLink = document.createElement('a');
+                        selectLink.href = `/select-and-chat/${clone.id}`;
+                        selectLink.className = 'btn';
+                        selectLink.textContent = 'Chat';
+                        actionsDiv.appendChild(selectLink);
 
                         card.appendChild(infoDiv);
                         card.appendChild(actionsDiv);
@@ -123,53 +127,23 @@
                     cloneListContainer.appendChild(cloneListDiv);
                     emptyState.style.display = 'none';
                 } else {
+                    console.log('[fetchClones] No clones found, displaying empty state.');
                     emptyState.style.display = 'block';
                 }
 
             } catch (error) {
-                console.error('Error fetching clones:', error);
+                console.error('[fetchClones] Error fetching or processing clones:', error);
                 cloneListContainer.innerHTML = '<div class="error-state">Error loading clones. Please try again later.</div>';
                 emptyState.style.display = 'none';
             }
         }
 
-        async function selectCloneAndChat(cloneId) {
-             console.log(`Selecting clone: ${cloneId}`);
-             flashMessagesContainer.innerHTML = ''; // Clear previous messages
-             flashMessagesContainer.style.display = 'none';
-
-             if (!backendApiUrl) {
-                 displayFlashMessage('Error: Backend API URL not configured.', 'error');
-                 return;
-             }
-
-             try {
-                 const response = await fetch(`${backendApiUrl}/api/select_clone/${cloneId}`, {
-                     method: 'POST',
-                     headers: {
-                         'Content-Type': 'application/json',
-                     },
-                     credentials: 'include' // Send cookies
-                 });
-
-                 const result = await response.json();
-
-                 if (response.ok) {
-                     console.log('Clone selected successfully:', result.message);
-                     // Redirect to the frontend chat page
-                     window.location.href = '/chat'; // Use frontend route
-                 } else {
-                     console.error('Error selecting clone:', result.error);
-                     displayFlashMessage(`Error selecting clone: ${result.error || 'Unknown error'}`, 'error');
-                 }
-             } catch (error) {
-                 console.error('Network or other error selecting clone:', error);
-                 displayFlashMessage('Failed to select clone due to a network error.', 'error');
-             }
-         }
-
-        // Fetch clones when the page loads
-        document.addEventListener('DOMContentLoaded', fetchClones);
+        console.log('[Clone Directory] Setting up DOMContentLoaded listener.');
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('[Clone Directory] DOMContentLoaded event fired. Calling fetchClones...');
+            fetchClones();
+        });
+        console.log('[Clone Directory] Script block finished.');
     </script>
 </body>
 </html>

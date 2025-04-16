@@ -1,6 +1,7 @@
 # Environment variables and secrets
 .env
 .env.template
+backend/credentials.json
 credentials.json
 
 # Python cache files

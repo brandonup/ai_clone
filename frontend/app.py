@@ -3,7 +3,7 @@ Frontend Flask application for AI Clone MVP
 Serves HTML templates and static files.
 Interacts with the backend API for dynamic data and actions.
 """
-from flask import Flask, render_template, session, request, jsonify
+from flask import Flask, render_template, session, request, jsonify, redirect, url_for
 from dotenv import load_dotenv
 import os
 import logging
@@ -17,7 +17,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key-frontend") # Use a separate key or the same one
+# Ensure the secret key matches the backend's default if FLASK_SECRET_KEY is not set
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key") 
+# Reverted session cookie settings to Flask defaults
+app.config['SERVER_NAME'] = 'localhost:5002' # Explicitly set server name
+app.config['SESSION_COOKIE_DOMAIN'] = None # Explicitly set cookie domain
 
 # Get Backend API URL from environment variable
 # This MUST be set when running the frontend service
@@ -62,13 +66,75 @@ def processing_clone_page(clone_id):
     # Pass clone_id needed by the template/JS
     return render_template('processing_clone.html', clone_id=clone_id, backend_api_url=BACKEND_API_URL)
 
-@app.route('/chat')
+@app.route('/chat') # No longer needs clone_id here
 def chat_page():
     """Serves the main chat interface page."""
-    # Chat history and clone details will be fetched/managed by JavaScript via API calls
-    # Check if a clone is selected in the session (managed via JS/API now)
-    # We might need an initial API call here or let JS handle fetching session info
-    return render_template('chat_interface.html', backend_api_url=BACKEND_API_URL)
+    # Get clone info from query parameters if available (passed from redirect)
+    clone_id = request.args.get('clone_id')
+    clone_name = request.args.get('clone_name')
+    clone_role = request.args.get('clone_role') # Get role too
+    conversation_id = request.args.get('conversation_id') # <<< GET CONVERSATION ID
+    logger.info(f"Rendering chat page for clone_id={clone_id}, clone_name={clone_name}, clone_role={clone_role}, conversation_id={conversation_id}")
+    # Pass these to the template, JS will use them for initial display
+    return render_template(
+        'chat_interface.html',
+        backend_api_url=BACKEND_API_URL,
+        initial_clone_id=clone_id,
+        initial_clone_name=clone_name,
+        initial_clone_role=clone_role,
+        initial_conversation_id=conversation_id # <<< PASS CONVERSATION ID
+    )
+
+# --- NEW ROUTE: Select Clone and Chat ---
+@app.route('/select-and-chat/<clone_id>')
+def select_and_chat(clone_id):
+    """Selects a clone and redirects to the chat page."""
+    logger.info(f"Selecting clone {clone_id} and redirecting to chat")
+    
+    if not BACKEND_API_URL:
+        logger.error("Backend API URL not configured")
+        return "Backend API URL not configured", 500
+    
+    try:
+        # Make a POST request to the backend API to select the clone
+        response = requests.post(
+            f"{BACKEND_API_URL}/api/select_clone/{clone_id}",
+            headers={"Content-Type": "application/json"},
+            cookies=request.cookies  # Forward cookies from the request
+        )
+        
+        # Check if the request was successful
+        if response.status_code == 200:
+            backend_response_data = response.json()
+            clone_name = backend_response_data.get('clone_name', 'Unknown')
+            conversation_id = backend_response_data.get('conversation_id') # <<< GET CONVERSATION ID
+
+            # Fetch full clone details to get the role (Backend select response doesn't include it)
+            clone_details_response = requests.get(f"{BACKEND_API_URL}/api/clones/{clone_id}", cookies=request.cookies)
+            clone_role = None
+            if clone_details_response.ok:
+                clone_role = clone_details_response.json().get('clone_role')
+
+            logger.info(f"Backend successfully selected clone {clone_id} (Name: {clone_name}, Role: {clone_role}, ConvID: {conversation_id})")
+            # No longer need to set frontend session here, backend handles it.
+            # Redirect to the chat page, passing info as query parameters
+            logger.info(f"Attempting to redirect to chat page for clone {clone_id}")
+            return redirect(url_for(
+                'chat_page',
+                clone_id=clone_id,
+                clone_name=clone_name,
+                clone_role=clone_role,
+                conversation_id=conversation_id # <<< PASS CONVERSATION ID
+            ))
+        else:
+            logger.error(f"Backend failed to select clone {clone_id}: {response.status_code} {response.text}")
+            # Display a user-friendly error page or message instead of raw text
+            # For now, keep the original error return for simplicity
+            return f"Failed to select clone: {response.text}", 500
+    
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error selecting clone {clone_id}: {e}")
+        return f"Error selecting clone: {e}", 500
 
 # --- Optional: Proxy Endpoint (Alternative to direct JS calls) ---
 # You could create endpoints here that proxy requests to the backend.

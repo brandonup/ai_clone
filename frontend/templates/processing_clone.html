@@ -96,7 +96,8 @@
                         window.location.href = directoryUrl; // Redirect to frontend directory
                     } else if (data.status === 'error') {
                         statusMessageElement.textContent = "An error occurred during processing.";
-                        errorMessageElement.textContent = `Error details: ${data.error_message || 'Unknown error'}`;
+                        // Corrected to use data.error instead of data.error_message
+                        errorMessageElement.textContent = `Error details: ${data.error || 'Unknown error'}`; 
                         errorMessageElement.style.display = 'block';
                         console.error("Ingestion process failed.");
                         // Stop polling on error

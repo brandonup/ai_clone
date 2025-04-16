@@ -88,6 +88,34 @@
                     <small>This is the name of the vectorstore collection used by this clone. This field is read-only.</small>
                 </div>
 
+                <!-- Google Drive Import Section -->
+                <div class="card sub-card" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee;">
+                    <h4>Google Drive Document Import</h4>
+                    <p>To import documents from a Google Drive folder:</p>
+                    <ol style="margin-left: 20px; margin-bottom: 15px;">
+                        <li>Go to the folder in your Google Drive.</li>
+                        <li>Click the "Share" button.</li>
+                        <li>Paste the following email address into the sharing dialog: <br>
+                            <strong id="service-account-email" style="user-select: all; background-color: #f0f0f0; padding: 2px 4px; border-radius: 3px;">ragie-drive-reader@prototype-app-456908.iam.gserviceaccount.com</strong>
+                            <button type="button" class="btn-copy" onclick="copyEmail()" style="margin-left: 5px; padding: 2px 6px; font-size: 0.8em;">Copy</button>
+                        </li>
+                        <li>Set the permission level to at least "Viewer".</li>
+                        <li>Click "Share" or "Send".</li>
+                        <li>Copy the URL of the shared folder.</li>
+                        <li>Paste the folder URL into the field below and click "Import".</li>
+                    </ol>
+                    <div class="form-group">
+                        <label for="drive_folder_import">Google Drive Folder Link:</label>
+                        <input type="url" name="drive_folder_import" id="drive_folder_import" placeholder="Paste shared folder URL here" style="width: calc(100% - 22px);">
+                    </div>
+                    <div class="form-group">
+                         <button type="button" id="import-drive-button" class="btn btn-secondary">Import</button>
+                    </div>
+                     <div id="import-status" class="import-status" style="margin-top: 10px; padding: 8px; border: 1px solid #ccc; border-radius: 4px; background-color: #f9f9f9;">Import Status: Idle</div>
+                </div>
+                <!-- End Google Drive Import Section -->
+
+
                 <div class="form-group">
                     <button type="submit" id="save-button" class="btn">Save Changes</button>
                     <!-- Link to frontend directory -->
@@ -114,6 +142,21 @@
         const loadingState = document.getElementById('loading-state');
         const settingsCard = document.getElementById('settings-card');
         const manageTitle = document.getElementById('manage-title');
+        const importDriveButton = document.getElementById('import-drive-button');
+        const importStatusDiv = document.getElementById('import-status');
+        const driveFolderImportInput = document.getElementById('drive_folder_import');
+        let pollingIntervalId = null; // To store the interval ID for polling
+
+        // Function to copy email
+        function copyEmail() {
+            const email = document.getElementById('service-account-email').innerText;
+            navigator.clipboard.writeText(email).then(() => {
+                displayFlashMessage('Service account email copied!', 'success');
+            }).catch(err => {
+                console.error('Failed to copy email: ', err);
+                displayFlashMessage('Failed to copy email.', 'error');
+            });
+        }
 
         // Function to display messages
         function displayFlashMessage(message, type = 'info') {
@@ -167,13 +210,103 @@
                 }
                 const cloneData = await response.json();
                 populateForm(cloneData);
+                // Also populate the import URL field if it exists in main data
+                driveFolderImportInput.value = cloneData.drive_folder || '';
                 loadingState.style.display = 'none';
                 settingsCard.style.display = 'block';
+
+                // Check initial import status after loading details
+                if (cloneData.ingestion_status === 'processing' || cloneData.ingestion_status === 'pending') {
+                    updateImportStatus(cloneData); // Update display immediately
+                    startPolling(); // Start polling if already processing
+                } else {
+                    updateImportStatus(cloneData); // Show final status (complete/error/idle)
+                }
 
             } catch (error) {
                 console.error('Error fetching clone details:', error);
                 loadingState.style.display = 'none';
                 displayFlashMessage(`Error loading clone details: ${error.message}`, 'error');
+            }
+        }
+
+        // Function to update import status display
+        function updateImportStatus(statusData) {
+            let statusText = `Import Status: ${statusData.status || 'Unknown'}`;
+            if (statusData.status === 'processing' || statusData.status === 'pending') {
+                statusText += ` (Attempted: ${statusData.files_attempted || 0}, Processed: ${statusData.files_processed || 0})`;
+                importDriveButton.disabled = true;
+                importDriveButton.textContent = 'Importing...';
+            } else {
+                 // Check if processing is finished based on file counts, even if status is not 'complete' yet
+                 const isFinished = (statusData.files_attempted !== undefined && statusData.files_processed === statusData.files_attempted);
+                 
+                 if (isFinished && statusData.status !== 'error') {
+                    // Override status text if counts match and no error
+                    statusText = `Import Status: complete (Processed ${statusData.files_processed || 0} of ${statusData.files_attempted} files)`;
+                 } else if (statusData.files_attempted !== undefined) {
+                     // Otherwise, append counts as before
+                     statusText += ` (Processed ${statusData.files_processed || 0} of ${statusData.files_attempted} files)`;
+                 }
+
+                 if (statusData.error) { 
+                     statusText += ` - Error: ${statusData.error}`;
+                 }
+                 importDriveButton.disabled = false;
+                 importDriveButton.textContent = 'Import'; 
+            }
+            importStatusDiv.textContent = statusText;
+            // Add a class for potential styling based on status
+            importStatusDiv.className = `import-status status-${(statusData.status || 'unknown').toLowerCase()}`;
+        }
+
+        // Function to poll import status
+        async function pollImportStatus() {
+            if (!backendApiUrl || !cloneId) return;
+
+            try {
+                const response = await fetch(`${backendApiUrl}/api/clone_status/${cloneId}`, { credentials: 'include' });
+                if (!response.ok) {
+                    console.error(`Status check failed: ${response.status}`);
+                    // Stop polling on server errors or if clone not found
+                    if (response.status >= 500 || response.status === 404) {
+                        stopPolling();
+                        importStatusDiv.textContent = 'Import Status: Error checking status.';
+                        importDriveButton.disabled = false;
+                        importDriveButton.textContent = 'Import'; // Changed text
+                    }
+                    return;
+                }
+                const statusData = await response.json();
+                updateImportStatus(statusData);
+
+                // Stop polling if complete or error
+                if (statusData.status === 'complete' || statusData.status === 'error') {
+                    stopPolling();
+                }
+            } catch (error) {
+                console.error('Error polling import status:', error);
+                importStatusDiv.textContent = 'Import Status: Network error checking status.';
+                stopPolling(); // Stop polling on network errors
+                importDriveButton.disabled = false;
+                importDriveButton.textContent = 'Import'; // Changed text
+            }
+        }
+
+        // Function to start polling
+        function startPolling() {
+            stopPolling(); // Clear any existing interval
+            console.log("Starting status polling...");
+            pollImportStatus(); // Poll immediately
+            pollingIntervalId = setInterval(pollImportStatus, 5000); // Poll every 5 seconds
+        }
+
+        // Function to stop polling
+        function stopPolling() {
+            if (pollingIntervalId) {
+                clearInterval(pollingIntervalId);
+                pollingIntervalId = null;
+                console.log("Stopped status polling.");
             }
         }
 
@@ -252,8 +385,69 @@
             }
         });
 
+        // Handle Import button click
+        importDriveButton.addEventListener('click', async () => {
+            const folderUrl = driveFolderImportInput.value.trim();
+            if (!folderUrl) {
+                displayFlashMessage('Please paste the Google Drive folder URL first.', 'error');
+                return;
+            }
+            // Basic URL validation (optional, can be more robust)
+            try {
+                new URL(folderUrl);
+            } catch (_) {
+                displayFlashMessage('Invalid Google Drive folder URL format.', 'error');
+                return;
+            }
+
+            importDriveButton.disabled = true;
+            importDriveButton.textContent = 'Starting Import...';
+            flashMessagesContainer.style.display = 'none';
+            importStatusDiv.textContent = 'Import Status: Initiating...';
+
+            try {
+                const response = await fetch(`${backendApiUrl}/api/clones/${cloneId}/import_drive`, {
+                    method: 'POST',
+                    // No body needed as the backend gets URL from clone data now
+                    // headers: { 'Content-Type': 'application/json' },
+                    // body: JSON.stringify({ drive_folder: folderUrl }), // Send URL if backend needs it
+                    credentials: 'include'
+                });
+
+                const result = await response.json();
+
+                if (response.status === 202) { // 202 Accepted means background task started
+                    displayFlashMessage(result.message || 'Import process started.', 'success');
+                    importStatusDiv.textContent = 'Import Status: Processing...';
+                    startPolling(); // Start polling for status updates
+                } else if (response.ok) { // Handle other potential success codes if needed
+                     displayFlashMessage(result.message || 'Request successful, check status.', 'info');
+                     // Optionally start polling here too if backend might return 200 immediately
+                }
+                 else {
+                    console.error('Import request failed:', result);
+                    displayFlashMessage(result.error || 'Failed to start import process.', 'error');
+                    importDriveButton.disabled = false;
+                    importDriveButton.textContent = 'Import'; // Changed text
+                    importStatusDiv.textContent = 'Import Status: Failed to start.';
+                }
+            } catch (error) {
+                console.error('Network or other error during import request:', error);
+                displayFlashMessage('An unexpected error occurred when starting the import.', 'error');
+                importDriveButton.disabled = false;
+                importDriveButton.textContent = 'Import'; // Changed text
+                importStatusDiv.textContent = 'Import Status: Error starting.';
+            }
+            // Note: Button state (disabled/text) will be managed by the polling function after this point if successful
+        });
+
+
         // Initial fetch when DOM is loaded
-        document.addEventListener('DOMContentLoaded', fetchCloneDetails);
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchCloneDetails();
+            // Optional: Stop polling if user navigates away
+            window.addEventListener('beforeunload', stopPolling);
+        });
     </script>
 </body>
 </html>

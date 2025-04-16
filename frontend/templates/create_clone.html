@@ -72,15 +72,22 @@
                 </div>
             </form>
             
-            <div class="info-box">
-                <h3>How to share your Google Drive folder:</h3>
-                <ol>
-                    <li>Create a folder in Google Drive and upload your clone documents</li>
-                    <li>Right-click the folder and select "Share"</li>
-                    <li>Set the folder to "Anyone with the link can view"</li>
-                    <li>Copy the link and paste it above</li>
+            <div class="info-box" style="margin-top: 15px;">
+                <h3>How to use Google Drive for documents (Optional):</h3>
+                 <ol style="margin-left: 20px; margin-bottom: 10px;">
+                    <li>Create a folder in your Google Drive and add your documents (PDF, DOCX, TXT).</li>
+                    <li>Right-click the folder and select "Share" > "Share".</li>
+                    <li>In the "Add people and groups" box, paste the following email address: <br>
+                        <strong id="service-account-email-create" style="user-select: all; background-color: #f0f0f0; padding: 2px 4px; border-radius: 3px;">ragie-drive-reader@prototype-app-456908.iam.gserviceaccount.com</strong>
+                        <button type="button" class="btn-copy" onclick="copyEmailCreate()" style="margin-left: 5px; padding: 2px 6px; font-size: 0.8em;">Copy</button>
+                    </li>
+                    <li>Ensure the permission level is set to "Viewer".</li>
+                    <li>Click "Send" or "Share" (no notification needed).</li>
+                    <li>Copy the URL link of that shared folder.</li>
+                    <li>Paste the folder URL into the "Google Drive Folder Link" field above.</li>
                 </ol>
-                <p><strong>Supported formats:</strong> PDF, DOCX, TXT, Google Docs</p>
+                <p>If you provide a link, the documents will be processed after you click "Create Clone".</p>
+                <p><strong>Supported formats:</strong> PDF, DOCX, TXT.</p> <!-- Removed Google Docs as direct processing might depend on export logic -->
             </div>
         </div>
         <div class="page-actions">
@@ -96,6 +103,18 @@
         const form = document.getElementById('create-clone-form');
         const submitButton = document.getElementById('submit-button');
         const flashMessagesContainer = document.getElementById('flash-messages');
+
+        // Function to copy email on create page
+        function copyEmailCreate() {
+            const email = document.getElementById('service-account-email-create').innerText;
+            navigator.clipboard.writeText(email).then(() => {
+                // Optionally show a temporary message near the button or use flash
+                alert('Service account email copied!');
+            }).catch(err => {
+                console.error('Failed to copy email: ', err);
+                alert('Failed to copy email.');
+            });
+        }
 
         function displayFlashMessage(message, type = 'error') { // Default to error for this form
             flashMessagesContainer.innerHTML = ''; // Clear previous messages

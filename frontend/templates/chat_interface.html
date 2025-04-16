@@ -55,6 +55,12 @@
 
     <script>
         const backendApiUrl = "{{ backend_api_url }}"; // Get URL from Flask
+        // Get initial clone info passed from Flask template context
+        const initialCloneId = "{{ initial_clone_id or '' }}";
+        const initialCloneName = "{{ initial_clone_name or 'Clone' }}";
+        const initialCloneRole = "{{ initial_clone_role or '' }}";
+        const initialConversationId = "{{ initial_conversation_id or '' }}"; // <<< GET CONVERSATION ID
+
         const chatMessagesContainer = document.getElementById('chat-messages');
         const chatForm = document.getElementById('chat-form');
         const questionTextarea = document.getElementById('question');
@@ -67,8 +73,8 @@
         const loadingChatState = document.getElementById('loading-chat-state');
         const flashMessagesContainer = document.getElementById('flash-messages');
 
-        let currentConversationId = null;
-        let currentCloneName = 'Clone'; // Default
+        let currentConversationId = initialConversationId; // <<< SET INITIAL CONVERSATION ID
+        let currentCloneName = initialCloneName; // Use initial name
 
         function displayFlashMessage(message, type = 'error') {
             flashMessagesContainer.innerHTML = ''; // Clear previous
@@ -127,8 +133,83 @@
                 }
                 textDiv.appendChild(infoDiv);
 
-                // Optional: Display prompt composition if available (consider security implications)
-                // if (message.prompt_composition) { ... }
+                // Display prompt composition if available
+                if (message.prompt_composition) {
+                    const detailsDiv = document.createElement('details');
+                    detailsDiv.classList.add('prompt-composition-details'); // Add class for styling
+
+                    const summary = document.createElement('summary');
+                    summary.textContent = 'Show Prompt Details';
+                    detailsDiv.appendChild(summary);
+
+                    // --- Render prompt composition in sections (Final Attempt) ---
+                    const compositionContainer = document.createElement('div');
+                    compositionContainer.classList.add('prompt-composition-container');
+                    const compositionText = message.prompt_composition || '';
+
+                    // Split by the double newline *before* a header line.
+                    const sections = compositionText.split(/\n\n(?=== .* ===)/g);
+
+                    sections.forEach(sectionText => {
+                        const trimmedSection = sectionText.trim();
+                        if (!trimmedSection) return; // Skip empty sections
+
+                        const sectionDiv = document.createElement('div');
+                        sectionDiv.classList.add('prompt-section'); // This div gets the bottom margin from CSS
+
+                        // Check if this section starts with a header
+                        const headerMatch = trimmedSection.match(/^(=== .* ===)\n?/);
+                        let contentText = trimmedSection; // Assume all is content initially
+
+                        if (headerMatch) {
+                            // If header found, create header element
+                            const headerText = headerMatch[1];
+                            const headerDiv = document.createElement('div');
+                            headerDiv.classList.add('prompt-section-header');
+                            headerDiv.textContent = headerText;
+                            sectionDiv.appendChild(headerDiv);
+
+                            // Update contentText to be everything *after* the header line
+                            contentText = trimmedSection.substring(headerMatch[0].length).trim();
+                        }
+
+                        // Create content element if there's any content left
+                        if (contentText) {
+                            const contentPre = document.createElement('pre');
+                            contentPre.classList.add('prompt-section-content');
+                            contentPre.textContent = contentText;
+                            sectionDiv.appendChild(contentPre);
+                        }
+
+                        // Add the complete section (header + content) to the container
+                        compositionContainer.appendChild(sectionDiv);
+                        
+                        // Add a horizontal rule after each section (except the last one, which we'll handle later)
+                        const hr = document.createElement('hr');
+                        hr.classList.add('prompt-section-divider');
+                        compositionContainer.appendChild(hr);
+                    });
+                    
+                    // Remove the last divider if it exists (we don't want a divider after the last section)
+                    const dividers = compositionContainer.querySelectorAll('.prompt-section-divider');
+                    if (dividers.length > 0) {
+                        compositionContainer.removeChild(dividers[dividers.length - 1]);
+                    }
+
+                     // Fallback if splitting resulted in nothing (e.g., text has no headers)
+                    if (compositionContainer.children.length === 0 && compositionText) {
+                         const fallbackDiv = document.createElement('div');
+                         fallbackDiv.classList.add('prompt-section');
+                         const fallbackPre = document.createElement('pre');
+                         fallbackPre.classList.add('prompt-section-content');
+                         fallbackPre.textContent = compositionText.trim();
+                         fallbackDiv.appendChild(fallbackPre);
+                         compositionContainer.appendChild(fallbackDiv);
+                    }
+
+                    detailsDiv.appendChild(compositionContainer);
+                    textDiv.appendChild(detailsDiv);
+                } // End of if (message.prompt_composition)
             }
 
             avatarDiv.appendChild(avatarIcon);
@@ -161,72 +242,88 @@
 
         async function fetchSessionAndHistory() {
             loadingChatState.style.display = 'block';
-            // Removed: emptyChatState.style.display = 'none';
-            questionTextarea.disabled = true;
+            questionTextarea.disabled = true; // Keep disabled until ready
             sendButton.disabled = true;
             flashMessagesContainer.style.display = 'none';
+
+            // --- Use Initial Info First ---
+            if (!initialCloneId || !initialConversationId) { // <<< CHECK CONVERSATION ID TOO
+                 console.error("No initial clone ID or conversation ID provided. Redirecting.");
+                 // This shouldn't happen if the redirect worked, but as a fallback:
+                 window.location.href = "{{ url_for('clone_directory') }}";
+                 return;
+            }
+
+            currentConversationId = initialConversationId; // Use initial conversation ID
+            currentCloneName = initialCloneName; // Use name passed from redirect
+            document.title = `Clone ${currentCloneName} - Chat`;
+            cloneNameHeader.textContent = currentCloneName;
+            if (initialCloneRole) { // Use initial role
+                roleTagHeader.textContent = initialCloneRole;
+                roleTagHeader.style.display = 'block';
+            } else {
+                roleTagHeader.style.display = 'none';
+            }
+
+            // Enable input now that we have basic info
+            questionTextarea.disabled = false;
+            sendButton.disabled = false;
+            questionTextarea.focus();
+
+            // --- End Initial Info ---
 
             if (!backendApiUrl) {
                 displayFlashMessage('Error: Backend API URL not configured.');
                 loadingChatState.textContent = 'Error: Backend API not configured.';
-                return;
+                return; // Stop, but don't redirect
             }
 
             try {
-                // 1. Fetch session info
+                // Fetch session info primarily for HISTORY now
+                console.log("Fetching session info (for history) from backend...");
                 const sessionResponse = await fetch(`${backendApiUrl}/api/session_info`, { credentials: 'include' });
+
                 if (!sessionResponse.ok) {
-                     // If session fetch fails, maybe redirect to directory?
-                     console.error("Failed to fetch session info, redirecting to directory.");
-                     window.location.href = '/directory'; // Redirect to frontend directory
-                     return; // Stop further execution
+                     // Don't redirect, just log error and potentially show message
+                     console.error(`Failed to fetch session info: ${sessionResponse.status}`);
+                     displayFlashMessage(`Error ${sessionResponse.status}: Could not load chat session details. Please try refreshing or starting a new chat.`, 'error');
+                     loadingChatState.style.display = 'none'; // Hide loading
+                     renderHistory([]); // Show empty state
+                     return; // Stop further execution in this block
                 }
+
                 const sessionInfo = await sessionResponse.json();
-                // Removed console.log for sessionInfo
+                console.log("Session info received:", sessionInfo);
 
-                if (!sessionInfo.active_clone_id) {
-                    // Removed console.log
-                    window.location.href = '/directory'; // Redirect if no clone selected
-                    return;
+                // Validate if the session clone/conversation matches the expected ones (optional but good)
+                if (sessionInfo.active_clone_id !== initialCloneId || sessionInfo.conversation_id !== initialConversationId) {
+                    console.warn(`Session info mismatch: Session(clone=${sessionInfo.active_clone_id}, conv=${sessionInfo.conversation_id}), Initial(clone=${initialCloneId}, conv=${initialConversationId}). Using initial conversation ID.`);
+                    // Keep using initialConversationId set earlier
                 }
 
-                // Update UI with clone info
-                currentConversationId = sessionInfo.conversation_id;
-                currentCloneName = sessionInfo.active_clone_name || 'Clone';
-                document.title = `Clone ${currentCloneName} - Chat`;
-                cloneNameHeader.textContent = currentCloneName;
-                if (sessionInfo.active_clone_role) {
-                    roleTagHeader.textContent = sessionInfo.active_clone_role;
-                    roleTagHeader.style.display = 'block';
-                } else {
-                    roleTagHeader.style.display = 'none';
-                }
+                // Get history using the determined conversation ID (or attempt even if null, backend might handle)
+                const history = sessionInfo.conversation_history || [];
+                console.log(`Rendering history for conversation ID: ${currentConversationId}, History length: ${history.length}`);
 
-                // 2. Render initial conversation history (assuming it's included in sessionInfo)
-                const initialHistory = sessionInfo.conversation_history || [];
-                // Removed console.log for history length
-                renderHistory(initialHistory); // Use history from session info, default to empty array
-
-                // Enable input
-                questionTextarea.disabled = false;
-                sendButton.disabled = false;
-                questionTextarea.focus();
+                renderHistory(history); // Render history from session
 
             } catch (error) {
-                console.error('Error loading chat session:', error);
+                console.error('Error fetching or processing chat session:', error);
                 loadingChatState.style.display = 'none';
-                displayFlashMessage(`Error loading chat: ${error.message}`, 'error');
-                 // Maybe offer a retry or link back to library
+                displayFlashMessage(`Error loading chat session: ${error.message}. Please try refreshing.`, 'error');
+                renderHistory([]); // Show empty state on error
+            } finally {
+                 // Ensure loading state is hidden even if errors occurred before renderHistory
+                 loadingChatState.style.display = 'none';
             }
         }
 
         // Handle Form Submission (Send Message)
         chatForm.addEventListener('submit', async (event) => {
+            console.log('[Submit Listener] Form submission triggered.'); // <<< ADD LOG HERE
             event.preventDefault();
             const question = questionTextarea.value.trim();
-            if (!question || !currentConversationId) {
-                return; // Ignore empty submissions or if session isn't ready
-            }
+            // Removed: if (!question || !currentConversationId) { return; }
 
             // Optimistically render user message
             const userMessage = { role: 'user', content: question, timestamp: new Date().toLocaleString() };
@@ -251,7 +348,7 @@
                 const response = await fetch(`${backendApiUrl}/api/ask`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question: question }),
+                    body: JSON.stringify({ question: question, clone_id: initialCloneId }), // <<< ADD CLONE ID
                     credentials: 'include'
                 });
 
@@ -336,13 +433,19 @@
 
         questionTextarea.addEventListener('keydown', function(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
+                console.log('[Keydown Listener] Enter pressed without Shift.'); // <<< ADD LOG HERE
                 event.preventDefault();
+                console.log('[Keydown Listener] Calling chatForm.requestSubmit().'); // <<< ADD LOG HERE
                 chatForm.requestSubmit(); // Use requestSubmit for better form handling
             }
         });
 
         // --- Initial Load ---
-        document.addEventListener('DOMContentLoaded', fetchSessionAndHistory);
+        document.addEventListener('DOMContentLoaded', () => {
+            // Add a small delay before fetching session info
+            console.log('[Chat Interface] DOMContentLoaded fired. Waiting 100ms before fetching session...');
+            setTimeout(fetchSessionAndHistory, 100); 
+        });
 
     </script>
 </body>

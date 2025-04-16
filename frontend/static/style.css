@@ -225,15 +225,98 @@ body {
 
 /* Source tag styling */
 .source-tag {
-    font-size: 0.8em;
-    color: #6c757d;
+    font-size: 1em; /* Increased to 1em */
+    color: #333; /* Match prompt details */
     font-weight: normal;
     padding: 2px 6px;
     background-color: #f8f9fa;
     border-radius: 4px;
 }
 
-/* Prompt composition styling */
+/* Prompt composition details styling */
+.prompt-composition-details {
+    margin-top: 10px;
+    border-top: 1px dashed #e0e0e0;
+    padding-top: 8px;
+}
+
+.prompt-composition-details summary {
+    font-size: 0.85em; /* Slightly larger than before */
+    color: var(--secondary-color);
+    cursor: pointer;
+    user-select: none;
+    padding: 4px 0;
+    font-weight: bold; /* Make summary stand out */
+    list-style: revert; /* Use default disclosure triangle */
+}
+
+.prompt-composition-details summary:hover {
+    color: var(--primary-color);
+}
+
+.prompt-composition-details pre {
+    background-color: #f8f9fa;
+    padding: 10px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    color: #333; /* Darker text for readability */
+    white-space: pre-wrap !important;  /* Preserve whitespace and wrap lines */
+    word-wrap: break-word !important; /* Break long words to prevent overflow */
+    overflow-wrap: break-word !important; /* Modern equivalent for word-wrap */
+    max-height: 300px;
+    overflow-y: auto;
+    margin-top: 5px; /* Reduced margin */
+    border: 1px solid #eee; /* Subtle border */
+}
+
+/* New styles for section-based prompt composition */
+.prompt-composition-container {
+    margin-top: 5px; /* Space below the summary */
+}
+
+/* Add space AFTER each section block */
+.prompt-section {
+    margin-bottom: 1.5em; /* Add space after the entire section (header + content) */
+}
+/* Remove margin from the last section to avoid extra space at the end */
+.prompt-section:last-child {
+    margin-bottom: 0;
+}
+
+/* Styling for the header within a section */
+.prompt-section-header {
+    font-weight: bold;
+    color: var(--dark-color); /* Make header text darker */
+    margin-bottom: 0.3em; /* Small space between header and its content */
+    font-size: 0.85em; /* Match summary size */
+}
+
+.prompt-section-content {
+    background-color: #f8f9fa;
+    padding: 10px;
+    border-radius: 4px;
+    font-size: 0.8em;
+    color: #333;
+    white-space: pre-wrap !important;
+    word-wrap: break-word !important;
+    overflow-wrap: break-word !important;
+    max-height: 300px; /* Keep max height */
+    overflow-y: auto; /* Keep scroll */
+    border: 1px solid #eee;
+    margin: 0; /* Ensure <pre> has no default margin */
+}
+
+/* Style for the horizontal rule dividers between prompt sections */
+.prompt-section-divider {
+    border: 0;
+    height: 1px;
+    background-color: #e0e0e0;
+    margin: 1.2em 0;
+    width: 100%;
+}
+
+
+/* Prompt composition styling (Legacy - can be removed if .prompt-composition class is no longer used) */
 .prompt-composition {
     margin-top: 15px;
     border-top: 1px dashed #e0e0e0;
@@ -614,4 +697,51 @@ textarea[readonly] {
     .message-content {
         gap: 8px;
     }
+}
+
+/* Ensure placeholder font matches input font */
+input::placeholder,
+textarea::placeholder {
+    font-family: inherit; /* Inherit font from the input/textarea */
+    font-size: inherit;   /* Inherit font size */
+    color: #999;         /* Slightly lighter color for placeholder */
+    opacity: 1;           /* Ensure placeholder is fully opaque */
+    font-style: normal;   /* Ensure placeholder is not italicized */
+}
+
+/* Vendor prefixes for cross-browser compatibility */
+input::-webkit-input-placeholder,
+textarea::-webkit-input-placeholder { /* WebKit, Blink, Edge */
+    font-family: inherit;
+    font-size: inherit;
+    color: #999;
+    opacity: 1;
+    font-style: normal;
+}
+
+input::-moz-placeholder,
+textarea::-moz-placeholder { /* Firefox 19+ */
+    font-family: inherit;
+    font-size: inherit;
+    color: #999;
+    opacity: 1;
+    font-style: normal;
+}
+
+input:-ms-input-placeholder,
+textarea:-ms-input-placeholder { /* Internet Explorer 10-11 */
+    font-family: inherit;
+    font-size: inherit;
+    color: #999;
+    opacity: 1;
+    font-style: normal;
+}
+
+input::-ms-input-placeholder,
+textarea::-ms-input-placeholder { /* Microsoft Edge */
+    font-family: inherit;
+    font-size: inherit;
+    color: #999;
+    opacity: 1;
+    font-style: normal;
 }
