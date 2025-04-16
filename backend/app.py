@@ -626,4 +626,4 @@ if __name__ == "__main__":
     # Use waitress or gunicorn for production, Flask dev server is fine for local
     # For Cloud Run, the entrypoint will be defined in the Dockerfile (e.g., using gunicorn)
     logger.info("Starting Flask development server for backend API.")
-    app.run(debug=True, port=5001, host='0.0.0.0', use_reloader=False) # use_reloader=False is often better for stability inside containers
+    app.run(debug=True, port=5003, host='0.0.0.0', use_reloader=False) # use_reloader=False is often better for stability inside containers
