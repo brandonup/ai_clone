@@ -608,6 +608,20 @@ def get_session_info():
 def health_check():
     return jsonify({"status": "ok"}), 200
 
+# Add a temporary route to delete all documents
+@app.route('/api/delete_all_ragie_documents', methods=['POST'])
+def delete_all_ragie_documents():
+    """Temporary API endpoint to delete all documents from Ragie."""
+    logger.warning("TEMPORARY ROUTE: Deleting all documents from Ragie")
+    try:
+        from utils.ragie_utils import delete_clone_documents
+        result = delete_clone_documents(None)  # Call with no clone_id to delete all
+        logger.info(f"Deletion result: {result}")
+        return jsonify({"message": "Attempted to delete all documents", "result": result})
+    except Exception as e:
+        logger.error(f"Error deleting all documents: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     # Use waitress or gunicorn for production, Flask dev server is fine for local
     # For Cloud Run, the entrypoint will be defined in the Dockerfile (e.g., using gunicorn)

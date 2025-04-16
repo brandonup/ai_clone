@@ -329,11 +329,14 @@ def delete_clone_documents(clone_id):
     """
     logger.info(f"DELETE_DOCS: Function called with clone_id: {clone_id}")
     
-    if not clone_id:
-        logger.error("DELETE_DOCS: No clone ID provided for document deletion")
-        return {"status": "error", "message": "No clone ID provided"}
-        
     ragie_api_key = os.getenv("RAGIE_API_KEY")
+    if not ragie_api_key:
+        logger.error("DELETE_DOCS: RAGIE_API_KEY environment variable not set for document deletion")
+        return {"status": "error", "message": "RAGIE_API_KEY not set"}
+    
+    if not clone_id:
+        logger.warning("DELETE_DOCS: No clone ID provided, attempting to delete ALL documents")
+        # Proceed to delete all documents if no clone_id is provided
     if not ragie_api_key:
         logger.error("DELETE_DOCS: RAGIE_API_KEY environment variable not set for document deletion")
         return {"status": "error", "message": "RAGIE_API_KEY not set"}
@@ -403,6 +406,10 @@ def delete_clone_documents(clone_id):
                     
                     # Check if this document belongs to our clone
                     if metadata and isinstance(metadata, dict) and metadata.get('clone_id') == clone_id:
+                        matching_docs.append(result)
+                    elif metadata and isinstance(metadata, dict) and metadata.get('scope') == 'clone_data':
+                        # If clone_id is missing, but scope is clone_data, assume it belongs to this clone
+                        logger.warning(f"DELETE_DOCS: Document missing clone_id, but has scope 'clone_data'. Assuming it belongs to clone {clone_id}")
                         matching_docs.append(result)
                 
                 logger.info(f"DELETE_DOCS: Found {len(matching_docs)} documents matching clone_id {clone_id}")
