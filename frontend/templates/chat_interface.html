@@ -15,13 +15,13 @@
                 <div id="role-tag-header" class="role-tag" style="display: none;"></div>
             </div>
             <div class="header-actions">
-                <!-- Manage Clone button -->
-                <a href="{{ url_for('manage_clone_page', clone_id=initial_clone_id) }}" class="new-chat-btn">
-                    <i class="fas fa-cog"></i> Manage Clone
-                </a>
                 <!-- Link to frontend directory -->
                 <a href="{{ url_for('clone_directory') }}" class="new-chat-btn">
                     <i class="fas fa-list"></i> Clone Directory
+                </a>
+                <!-- Manage Clone button -->
+                <a href="{{ url_for('manage_clone_page', clone_id=initial_clone_id) }}" class="new-chat-btn">
+                    <i class="fas fa-cog"></i> Manage Clone
                 </a>
                 <!-- Button handled by JS -->
                 <button id="new-chat-button" class="new-chat-btn">
