@@ -36,16 +36,15 @@
 
         <div class="chat-messages" id="chat-messages">
             <!-- Messages will be loaded here by JavaScript -->
-            <div id="empty-chat-state" class="empty-chat"> <!-- REMOVED style="display: none;" -->
+            <div id="empty-chat-state" class="empty-chat">
                  <div class="empty-chat-icon"><i class="fas fa-comments"></i></div>
                  <h2 id="empty-chat-title">Welcome!</h2>
                  <p>Ask a question to start the conversation.</p>
             </div>
-             <div id="loading-chat-state" class="loading-state">Loading chat...</div>
+             <div id="loading-chat-state" class="loading-state" style="display: none;">Loading chat...</div>
         </div>
 
         <div class="chat-input">
-             <!-- Removed action and method -->
             <form id="chat-form">
                 <div class="input-container">
                     <textarea name="question" id="question" rows="1" placeholder="Ask a question..." required disabled></textarea>
@@ -58,12 +57,11 @@
     </div>
 
     <script>
-        const backendApiUrl = "{{ backend_api_url }}"; // Get URL from Flask
-        // Get initial clone info passed from Flask template context
+        const backendApiUrl = "{{ backend_api_url }}";
         const initialCloneId = "{{ initial_clone_id or '' }}";
         const initialCloneName = "{{ initial_clone_name or 'Clone' }}";
         const initialCloneRole = "{{ initial_clone_role or '' }}";
-        const initialConversationId = "{{ initial_conversation_id or '' }}"; // <<< GET CONVERSATION ID
+        const initialConversationId = "{{ initial_conversation_id or '' }}";
 
         const chatMessagesContainer = document.getElementById('chat-messages');
         const chatForm = document.getElementById('chat-form');
@@ -77,11 +75,11 @@
         const loadingChatState = document.getElementById('loading-chat-state');
         const flashMessagesContainer = document.getElementById('flash-messages');
 
-        let currentConversationId = initialConversationId; // <<< SET INITIAL CONVERSATION ID
-        let currentCloneName = initialCloneName; // Use initial name
+        let currentConversationId = initialConversationId;
+        let currentCloneName = initialCloneName;
 
         function displayFlashMessage(message, type = 'error') {
-            flashMessagesContainer.innerHTML = ''; // Clear previous
+            flashMessagesContainer.innerHTML = '';
             const messageDiv = document.createElement('div');
             messageDiv.className = `flash-message flash-${type}`;
             messageDiv.textContent = message;
@@ -91,7 +89,10 @@
         }
 
         function scrollToBottom() {
-            chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+            // A small delay can sometimes help ensure rendering is complete
+            setTimeout(() => {
+                chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+            }, 50);
         }
 
         function renderMessage(message) {
@@ -109,8 +110,8 @@
             const textDiv = document.createElement('div');
             textDiv.classList.add('message-text');
             const textP = document.createElement('p');
-            textP.textContent = message.content; // Basic text rendering
-             // Consider using a library like 'marked' or 'DOMPurify' if you expect Markdown or need sanitization
+            // Basic rendering, consider Markdown/sanitization later if needed
+            textP.textContent = message.content || '';
             textDiv.appendChild(textP);
 
             if (message.role === 'user') {
@@ -132,21 +133,28 @@
                 if (message.timestamp) {
                     const timeSpan = document.createElement('span');
                     timeSpan.classList.add('message-timestamp');
-                    timeSpan.textContent = message.timestamp;
+                    // Attempt to format timestamp nicely, fallback to original
+                    try {
+                        timeSpan.textContent = new Date(message.timestamp).toLocaleString();
+                    } catch (e) {
+                        timeSpan.textContent = message.timestamp;
+                    }
                     infoDiv.appendChild(timeSpan);
                 }
-                textDiv.appendChild(infoDiv);
+                // Append infoDiv only if it has content
+                if (infoDiv.hasChildNodes()) {
+                    textDiv.appendChild(infoDiv);
+                }
 
                 // Display prompt composition if available
                 if (message.prompt_composition) {
                     const detailsDiv = document.createElement('details');
-                    detailsDiv.classList.add('prompt-composition-details'); // Add class for styling
+                    detailsDiv.classList.add('prompt-composition-details');
 
                     const summary = document.createElement('summary');
                     summary.textContent = 'Show Prompt Details';
                     detailsDiv.appendChild(summary);
 
-                    // --- Render prompt composition in sections (Final Attempt) ---
                     const compositionContainer = document.createElement('div');
                     compositionContainer.classList.add('prompt-composition-container');
                     const compositionText = message.prompt_composition || '';
@@ -154,30 +162,25 @@
                     // Split by the double newline *before* a header line.
                     const sections = compositionText.split(/\n\n(?=== .* ===)/g);
 
-                    sections.forEach(sectionText => {
+                    sections.forEach((sectionText, index) => {
                         const trimmedSection = sectionText.trim();
-                        if (!trimmedSection) return; // Skip empty sections
+                        if (!trimmedSection) return;
 
                         const sectionDiv = document.createElement('div');
-                        sectionDiv.classList.add('prompt-section'); // This div gets the bottom margin from CSS
+                        sectionDiv.classList.add('prompt-section');
 
-                        // Check if this section starts with a header
                         const headerMatch = trimmedSection.match(/^(=== .* ===)\n?/);
-                        let contentText = trimmedSection; // Assume all is content initially
+                        let contentText = trimmedSection;
 
                         if (headerMatch) {
-                            // If header found, create header element
                             const headerText = headerMatch[1];
                             const headerDiv = document.createElement('div');
                             headerDiv.classList.add('prompt-section-header');
                             headerDiv.textContent = headerText;
                             sectionDiv.appendChild(headerDiv);
-
-                            // Update contentText to be everything *after* the header line
                             contentText = trimmedSection.substring(headerMatch[0].length).trim();
                         }
 
-                        // Create content element if there's any content left
                         if (contentText) {
                             const contentPre = document.createElement('pre');
                             contentPre.classList.add('prompt-section-content');
@@ -185,22 +188,17 @@
                             sectionDiv.appendChild(contentPre);
                         }
 
-                        // Add the complete section (header + content) to the container
                         compositionContainer.appendChild(sectionDiv);
-                        
-                        // Add a horizontal rule after each section (except the last one, which we'll handle later)
-                        const hr = document.createElement('hr');
-                        hr.classList.add('prompt-section-divider');
-                        compositionContainer.appendChild(hr);
-                    });
-                    
-                    // Remove the last divider if it exists (we don't want a divider after the last section)
-                    const dividers = compositionContainer.querySelectorAll('.prompt-section-divider');
-                    if (dividers.length > 0) {
-                        compositionContainer.removeChild(dividers[dividers.length - 1]);
-                    }
 
-                     // Fallback if splitting resulted in nothing (e.g., text has no headers)
+                        // Add divider *before* the next section (except for the first one)
+                        if (index > 0) {
+                             const hr = document.createElement('hr');
+                             hr.classList.add('prompt-section-divider');
+                             compositionContainer.insertBefore(hr, sectionDiv);
+                        }
+                    });
+
+                    // Fallback if splitting resulted in nothing
                     if (compositionContainer.children.length === 0 && compositionText) {
                          const fallbackDiv = document.createElement('div');
                          fallbackDiv.classList.add('prompt-section');
@@ -213,7 +211,7 @@
 
                     detailsDiv.appendChild(compositionContainer);
                     textDiv.appendChild(detailsDiv);
-                } // End of if (message.prompt_composition)
+                }
             }
 
             avatarDiv.appendChild(avatarIcon);
@@ -221,178 +219,118 @@
             contentDiv.appendChild(textDiv);
             messageDiv.appendChild(contentDiv);
 
+            // Remove empty state before adding messages
+            emptyChatState.classList.remove('empty-chat--visible');
             chatMessagesContainer.appendChild(messageDiv);
         }
 
         function renderHistory(history) {
-            // Selectively remove only message elements (user or assistant)
+            console.log(`Rendering history. Length: ${history ? history.length : 'null/undefined'}`);
+            // Clear existing messages
             const messagesToRemove = chatMessagesContainer.querySelectorAll('.message.user-message, .message.assistant-message');
             messagesToRemove.forEach(msg => msg.remove());
 
-            loadingChatState.style.display = 'none'; // Hide loading indicator
-            emptyChatState.classList.remove('empty-chat--visible'); // Ensure empty state is hidden initially
+            loadingChatState.style.display = 'none';
+            emptyChatState.classList.remove('empty-chat--visible'); // Hide by default
 
-            // Check if history is truly empty (null, undefined, or empty array)
             if (!history || history.length === 0) {
-                // Show empty state using the CSS class
-                emptyChatTitle.textContent = `Welcome to Clone ${currentCloneName}`;
-                emptyChatState.classList.add('empty-chat--visible'); // Explicitly add class only if needed
+                emptyChatTitle.textContent = `Welcome to Clone ${currentCloneName || 'Chat'}`;
+                emptyChatState.classList.add('empty-chat--visible'); // Show if history is empty
+                console.log("History empty, showing empty state.");
             } else {
-                 // Render messages (empty state remains hidden)
-                history.forEach(renderMessage); // renderMessage appends to chatMessagesContainer
+                console.log("Rendering messages from history...");
+                history.forEach(renderMessage);
             }
             scrollToBottom();
-        }
-
-        async function fetchSessionAndHistory() {
-            loadingChatState.style.display = 'block';
-            questionTextarea.disabled = true; // Keep disabled until ready
-            sendButton.disabled = true;
-            flashMessagesContainer.style.display = 'none';
-
-            // --- Use Initial Info First ---
-            if (!initialCloneId || !initialConversationId) { // <<< CHECK CONVERSATION ID TOO
-                 console.error("No initial clone ID or conversation ID provided. Redirecting.");
-                 // This shouldn't happen if the redirect worked, but as a fallback:
-                 window.location.href = "{{ url_for('clone_directory') }}";
-                 return;
-            }
-
-            currentConversationId = initialConversationId; // Use initial conversation ID
-            currentCloneName = initialCloneName; // Use name passed from redirect
-            document.title = `Clone ${currentCloneName} - Chat`;
-            cloneNameHeader.textContent = currentCloneName;
-            if (initialCloneRole) { // Use initial role
-                roleTagHeader.textContent = initialCloneRole;
-                roleTagHeader.style.display = 'block';
-            } else {
-                roleTagHeader.style.display = 'none';
-            }
-
-            // Enable input now that we have basic info
-            questionTextarea.disabled = false;
-            sendButton.disabled = false;
-            questionTextarea.focus();
-
-            // --- End Initial Info ---
-
-            if (!backendApiUrl) {
-                displayFlashMessage('Error: Backend API URL not configured.');
-                loadingChatState.textContent = 'Error: Backend API not configured.';
-                return; // Stop, but don't redirect
-            }
-
-            try {
-                // Fetch session info primarily for HISTORY now
-                console.log("Fetching session info (for history) from backend...");
-                const sessionResponse = await fetch(`${backendApiUrl}/api/session_info`, { credentials: 'include' });
-
-                if (!sessionResponse.ok) {
-                     // Don't redirect, just log error and potentially show message
-                     console.error(`Failed to fetch session info: ${sessionResponse.status}`);
-                     displayFlashMessage(`Error ${sessionResponse.status}: Could not load chat session details. Please try refreshing or starting a new chat.`, 'error');
-                     loadingChatState.style.display = 'none'; // Hide loading
-                     renderHistory([]); // Show empty state
-                     return; // Stop further execution in this block
-                }
-
-                const sessionInfo = await sessionResponse.json();
-                console.log("Session info received:", sessionInfo);
-
-                // Validate if the session clone/conversation matches the expected ones (optional but good)
-                if (sessionInfo.active_clone_id !== initialCloneId || sessionInfo.conversation_id !== initialConversationId) {
-                    console.warn(`Session info mismatch: Session(clone=${sessionInfo.active_clone_id}, conv=${sessionInfo.conversation_id}), Initial(clone=${initialCloneId}, conv=${initialConversationId}). Using initial conversation ID.`);
-                    // Keep using initialConversationId set earlier
-                }
-
-                // Get history using the determined conversation ID (or attempt even if null, backend might handle)
-                const history = sessionInfo.conversation_history || [];
-                console.log(`Rendering history for conversation ID: ${currentConversationId}, History length: ${history.length}`);
-
-                renderHistory(history); // Render history from session
-
-            } catch (error) {
-                console.error('Error fetching or processing chat session:', error);
-                loadingChatState.style.display = 'none';
-                displayFlashMessage(`Error loading chat session: ${error.message}. Please try refreshing.`, 'error');
-                renderHistory([]); // Show empty state on error
-            } finally {
-                 // Ensure loading state is hidden even if errors occurred before renderHistory
-                 loadingChatState.style.display = 'none';
-            }
         }
 
         // Handle Form Submission (Send Message)
         chatForm.addEventListener('submit', async (event) => {
-            console.log('[Submit Listener] Form submission triggered.'); // <<< ADD LOG HERE
             event.preventDefault();
+            console.log('[Submit Listener] Form submission triggered.');
             const question = questionTextarea.value.trim();
-            // Removed: if (!question || !currentConversationId) { return; }
+            if (!question || !currentConversationId) {
+                console.warn("Empty question or missing conversation ID. Aborting submit.");
+                return;
+            }
 
             // Optimistically render user message
-            const userMessage = { role: 'user', content: question, timestamp: new Date().toLocaleString() };
+            const userMessage = { role: 'user', content: question, timestamp: new Date().toISOString() }; // Use ISO string for consistency
             renderMessage(userMessage);
             scrollToBottom();
 
             // Clear input and disable form
+            const originalHeight = questionTextarea.style.height; // Store original height
             questionTextarea.value = '';
-            questionTextarea.style.height = 'auto'; // Reset height
+            questionTextarea.style.height = originalHeight; // Restore height after clearing
             questionTextarea.disabled = true;
             sendButton.disabled = true;
 
-            // Optional: Show thinking indicator
+            // Show thinking indicator
             const thinkingDiv = document.createElement('div');
-            thinkingDiv.className = 'message assistant-message thinking';
+            thinkingDiv.className = 'message assistant-message thinking'; // Unique class
             thinkingDiv.innerHTML = '<div class="message-content"><div class="message-avatar"><i class="fas fa-robot"></i></div><div class="message-text"><p><i>Thinking...</i></p></div></div>';
             chatMessagesContainer.appendChild(thinkingDiv);
             scrollToBottom();
-
 
             try {
                 const response = await fetch(`${backendApiUrl}/api/ask`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ question: question, clone_id: initialCloneId }), // <<< ADD CLONE ID
+                    body: JSON.stringify({ 
+                        question: question, 
+                        clone_id: initialCloneId,
+                        conversation_id: currentConversationId 
+                    }), // Send clone_id and conversation_id
                     credentials: 'include'
                 });
 
-                // Remove thinking indicator regardless of success/failure
-                const thinkingIndicator = chatMessagesContainer.querySelector('.thinking');
-                if (thinkingIndicator) {
-                    thinkingIndicator.remove();
+                // Remove thinking indicator *before* processing response
+                const currentThinkingIndicator = chatMessagesContainer.querySelector('.thinking'); // Query again inside try
+                if (currentThinkingIndicator) {
+                    currentThinkingIndicator.remove();
                 }
 
-                const result = await response.json();
-
-                if (response.ok) {
-                    // The API now returns the full history, so re-render it
-                    renderHistory(result.conversation_history || []);
+                if (!response.ok) {
+                    let errorMsg = `Error ${response.status}: Failed to get response from clone.`;
+                    try {
+                        const errorResult = await response.json();
+                        errorMsg = errorResult.error || errorMsg;
+                    } catch (jsonError) {
+                        console.warn("Could not parse error response as JSON.");
+                    }
+                    console.error('Error asking question:', errorMsg);
+                    displayFlashMessage(errorMsg, 'error');
+                    // Consider removing the optimistic user message here if desired
                 } else {
-                    console.error('Error asking question:', result);
-                    displayFlashMessage(result.error || 'Failed to get response from clone.', 'error');
-                    // Optionally remove the optimistic user message or add an error indicator
+                    const result = await response.json();
+                    console.log("Received response from /api/ask:", result);
+                    // Re-render the entire history from the response
+                    renderHistory(result.conversation_history || []);
                 }
 
             } catch (error) {
-                 // Remove thinking indicator on network error too
-                const thinkingIndicator = chatMessagesContainer.querySelector('.thinking');
-                if (thinkingIndicator) {
-                    thinkingIndicator.remove();
-                }
                 console.error('Network or other error sending message:', error);
-                displayFlashMessage('An network error occurred while sending your message.', 'error');
+                 // Ensure thinking indicator is removed on network error too
+                const currentThinkingIndicator = chatMessagesContainer.querySelector('.thinking'); // Query again inside catch
+                if (currentThinkingIndicator) {
+                    currentThinkingIndicator.remove();
+                }
+                displayFlashMessage('A network error occurred while sending your message.', 'error');
             } finally {
                 // Re-enable form
                 questionTextarea.disabled = false;
                 sendButton.disabled = false;
                 questionTextarea.focus();
+                // Adjust height again in case content caused scrollbars during disable
+                questionTextarea.dispatchEvent(new Event('input'));
             }
         });
 
         // Handle New Chat Button
         newChatButton.addEventListener('click', async () => {
             console.log("Starting new chat...");
-            newChatButton.disabled = true; // Prevent double clicks
+            newChatButton.disabled = true;
             flashMessagesContainer.style.display = 'none';
 
             if (!backendApiUrl) {
@@ -412,8 +350,8 @@
                  if (response.ok) {
                      console.log("New chat started:", result);
                      currentConversationId = result.conversation_id; // Update conversation ID
-                     renderHistory([]); // Clear the chat display
-                     questionTextarea.disabled = false; // Ensure input is enabled
+                     renderHistory([]); // Clear the chat display and show empty state
+                     questionTextarea.disabled = false;
                      sendButton.disabled = false;
                      questionTextarea.focus();
                  } else {
@@ -428,27 +366,111 @@
             }
         });
 
-
-        // --- Existing Textarea Utils ---
+        // --- Textarea Auto-Resize ---
         questionTextarea.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = (this.scrollHeight) + 'px';
+            this.style.height = 'auto'; // Temporarily shrink
+            this.style.height = (this.scrollHeight) + 'px'; // Set to scroll height
         });
 
+        // --- Submit on Enter (without Shift) ---
         questionTextarea.addEventListener('keydown', function(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
-                console.log('[Keydown Listener] Enter pressed without Shift.'); // <<< ADD LOG HERE
-                event.preventDefault();
-                console.log('[Keydown Listener] Calling chatForm.requestSubmit().'); // <<< ADD LOG HERE
-                chatForm.requestSubmit(); // Use requestSubmit for better form handling
+                event.preventDefault(); // Prevent newline
+                // Check if textarea is not empty before submitting
+                if (questionTextarea.value.trim()) {
+                    console.log('[Keydown Listener] Enter pressed, submitting form.');
+                    chatForm.requestSubmit(); // Use standard form submission trigger
+                } else {
+                    console.log('[Keydown Listener] Enter pressed, but textarea is empty.');
+                }
             }
         });
 
-        // --- Initial Load ---
+        // --- Initial Page Load Logic ---
         document.addEventListener('DOMContentLoaded', () => {
-            // Add a small delay before fetching session info
-            console.log('[Chat Interface] DOMContentLoaded fired. Waiting 100ms before fetching session...');
-            setTimeout(fetchSessionAndHistory, 100); 
+            console.log('[Chat Interface] DOMContentLoaded fired.');
+            if (!initialCloneId || !initialConversationId) {
+                console.error("Missing initial clone/conversation ID. Redirecting.");
+                window.location.href = "{{ url_for('clone_directory') }}"; // Redirect if essential info missing
+                return;
+            }
+
+            // Set initial state from template variables
+            currentConversationId = initialConversationId;
+            currentCloneName = initialCloneName;
+            document.title = `Clone ${currentCloneName} - Chat`;
+            cloneNameHeader.textContent = currentCloneName;
+            if (initialCloneRole) {
+                roleTagHeader.textContent = initialCloneRole;
+                roleTagHeader.style.display = 'block';
+            } else {
+                roleTagHeader.style.display = 'none';
+            }
+
+            // Show loading state and disable input initially
+            loadingChatState.style.display = 'block';
+            emptyChatState.classList.remove('empty-chat--visible');
+            questionTextarea.disabled = true;
+            sendButton.disabled = true;
+
+            // Function to load initial history
+            async function loadInitialHistory() {
+                console.log(`Attempting to load history for conversation: ${currentConversationId}`);
+                if (!currentConversationId) {
+                    console.log("No initial conversation ID, rendering empty state.");
+                    renderHistory([]); // Render empty state if no ID
+                    loadingChatState.style.display = 'none';
+                    questionTextarea.disabled = false;
+                    sendButton.disabled = false;
+                    questionTextarea.focus();
+                    return;
+                }
+
+                try {
+                    // --- TODO: Ensure this backend endpoint exists and returns history ---
+                    // Example endpoint: /api/conversation_history/{conversation_id}
+                    const response = await fetch(`${backendApiUrl}/api/conversation_history/${currentConversationId}`, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' },
+                        credentials: 'include'
+                    });
+
+                    loadingChatState.style.display = 'none'; // Hide loading indicator
+
+                    if (!response.ok) {
+                        let errorMsg = `Error ${response.status}: Failed to load conversation history.`;
+                        try {
+                            const errorResult = await response.json();
+                            errorMsg = errorResult.error || errorMsg;
+                        } catch (jsonError) { /* Ignore if error response isn't JSON */ }
+                        console.error(errorMsg);
+                        displayFlashMessage(errorMsg, 'error');
+                        renderHistory([]); // Show empty state on error
+                    } else {
+                        const result = await response.json();
+                        console.log("Received initial history:", result);
+                        renderHistory(result.conversation_history || []); // Render fetched history
+                    }
+                } catch (error) {
+                    console.error('Network or other error loading initial history:', error);
+                    loadingChatState.style.display = 'none';
+                    displayFlashMessage('A network error occurred while loading the chat history.', 'error');
+                    renderHistory([]); // Show empty state on network error
+                } finally {
+                    // Re-enable form regardless of history load success/failure
+                    questionTextarea.disabled = false;
+                    sendButton.disabled = false;
+                    questionTextarea.focus();
+                    // Adjust height in case content caused scrollbars
+                    questionTextarea.dispatchEvent(new Event('input'));
+                }
+            }
+
+            // Load the initial history
+            loadInitialHistory();
+            // --- End of initial history loading ---
+
+            console.log(`Chat interface initialized for Clone ID: ${initialCloneId}, Conversation ID: ${initialConversationId}`);
         });
 
     </script>

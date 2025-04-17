@@ -1,272 +1,196 @@
-import json
 import os
+import json
 import logging
-import uuid
+from google.cloud import firestore
+import traceback # For detailed error logging
 
+# --- Firestore Configuration ---
+# Remove global initialization
+# db = None
+# CLONES_COLLECTION = None
 logger = logging.getLogger(__name__)
 
-# Category to Role Mapping
+def _get_firestore_collection(collection_name='clones'):
+    """Helper to initialize client and get collection reference."""
+    try:
+        # Explicitly set the project ID to ensure the correct one is used
+        db = firestore.Client(project='prototype-app-456908')
+        return db.collection(collection_name)
+    except Exception as e:
+        logger.error(f"Failed to initialize Firestore client or get collection '{collection_name}': {e}", exc_info=True)
+        return None
+
+# --- Constants ---
+# Removed CLONES_FILE_PATH
+
+# Mapping from frontend category selection to internal role/persona guidance
 CATEGORY_TO_ROLE_MAP = {
-    "Animals": "Animal",
-    "Authors and books": "Author",
-    "CEO": "CEO",
-    "Celebrities": "Celebrity",
-    "Characters": "Character",
-    "Coaches": "Coach",
-    "Comedy": "Comedian",
-    "Companions": "Companion",
-    "Consultants": "Consultant",
-    "Discussion": "Conversation partner",
-    "Expert": "Expert",
-    "Family": "Family member",
-    "Games": "Game",
+    "Characters": "Fictional Character",
+    "Coaches": "Coach or Mentor",
+    "Therapists": "Therapeutic Advisor",
+    "Games": "Game Character or Assistant",
     "Historical": "Historical Figure",
-    "Influencers": "Influencer",
-    "Me!": "Themselves",
-    "Other": "Undisclosed",
-    "Regular people": "Regular person",
-    "Religion": "Religious person",
-    "Romantic": "Romantic interest",
-    "Spokespersons": "Spokesperson",
-    "Therapists": "Therapist"
+    "Religion": "Religious Figure or Guide",
+    "Animals": "Animal Persona",
+    "Discussion": "Discussion Facilitator",
+    "Comedy": "Comedian or Humorous Persona",
+    "Other": "General Assistant",
+    "Authors and books": "Author or Literary Character",
+    "Celebrities": "Celebrity Persona",
+    "Influencers": "Influencer Persona",
+    "Companions": "Companion",
+    "Romantic": "Romantic Partner",
+    "Family": "Family Member",
+    "Me!": "Personal Clone", # Special case?
+    "Expert": "Subject Matter Expert",
+    "Regular people": "Everyday Person",
+    "CEO": "CEO Prsona",
+    "Consultant": "Consultant Persona",
+    "Spokesperson": "Spokesperson Persona"
 }
 
-CLONES_FILE = 'clones.json'
+# --- Core Functions ---
 
 def load_clones() -> list:
-    """
-    Load clones from the JSON file, ensuring backward compatibility.
-    - Maps 'clone_category' to 'clone_role'.
-    - Removes deprecated 'enhanced_category'.
-    
-    Returns:
-        list: A list of clone dictionaries
-    """
-    if not os.path.exists(CLONES_FILE):
-        logger.info(f"'{CLONES_FILE}' not found. Returning empty list.")
-        return []
-    
+    """Loads all clone profiles from Firestore."""
+    clones_collection = _get_firestore_collection('clones')
+    if not clones_collection:
+        return [] # Error already logged by helper
     try:
-        with open(CLONES_FILE, 'r', encoding='utf-8') as f:
-            content = f.read()
-            
-            if not content:
-                logger.info(f"'{CLONES_FILE}' is empty. Returning empty list.")
-                return []
-                
-            clones_list = json.loads(content)
-            
-            if not isinstance(clones_list, list):
-                logger.error(f"'{CLONES_FILE}' does not contain a valid JSON list. Returning empty list.")
-                return []
-
-            # --- Backward Compatibility Logic ---
-            updated_clones_file = False
-            for clone in clones_list:
-                needs_save = False
-                category = clone.get('clone_category')
-
-                # 1. Ensure clone_role is correctly mapped from category
-                if category:
-                    expected_role = CATEGORY_TO_ROLE_MAP.get(category, "Undisclosed")
-                    if clone.get('clone_role') != expected_role:
-                        clone['clone_role'] = expected_role
-                        logger.info(f"Updated 'clone_role' to mapped value '{expected_role}' for clone ID {clone.get('id')}")
-                        needs_save = True
-                # 2. If category missing but role exists, infer category
-                elif 'clone_role' in clone and 'clone_category' not in clone:
-                     # Try to find a category key that maps to the existing role value
-                     inferred_category = next((cat for cat, role_val in CATEGORY_TO_ROLE_MAP.items() if role_val == clone['clone_role']), None)
-                     # If we found a matching category, use it. Otherwise, use the role itself (or 'Other').
-                     clone['clone_category'] = inferred_category if inferred_category else clone.get('clone_role', 'Other')
-                     logger.warning(f"Set missing 'clone_category' to '{clone['clone_category']}' based on existing 'clone_role' for clone ID {clone.get('id')}")
-                     # Now ensure the role is correctly mapped from the *inferred* category
-                     expected_role = CATEGORY_TO_ROLE_MAP.get(clone['clone_category'], "Undisclosed")
-                     if clone.get('clone_role') != expected_role:
-                         clone['clone_role'] = expected_role
-                         logger.info(f"Updated 'clone_role' to mapped value '{expected_role}' after inferring category for clone ID {clone.get('id')}")
-                     needs_save = True
-                # 3. If both are missing, set defaults
-                elif 'clone_category' not in clone and 'clone_role' not in clone:
-                    clone['clone_category'] = 'Other'
-                    clone['clone_role'] = 'Undisclosed'
-                    logger.warning(f"Set missing 'clone_category' and 'clone_role' to defaults for clone ID {clone.get('id')}")
-                    needs_save = True
-
-
-                # 4. Remove the old enhanced_category field if it exists
-                if 'enhanced_category' in clone:
-                    del clone['enhanced_category']
-                    logger.info(f"Removed deprecated 'enhanced_category' field from clone ID {clone.get('id')}")
-                    needs_save = True
-
-                if needs_save:
-                    updated_clones_file = True
-
-            # Save the updated list back if any clones were modified
-            if updated_clones_file:
-                logger.info("Saving clones file with updated roles/removed fields.")
-                # Call save_clones directly to avoid potential recursion if save_clones also calls load_clones
-                try:
-                    with open(CLONES_FILE, 'w', encoding='utf-8') as f_save:
-                        json.dump(clones_list, f_save, indent=2)
-                    logger.info(f'Successfully saved updated clones to \'{CLONES_FILE}\'.')
-                except Exception as save_e:
-                     logger.error(f"Error saving updated clones within load_clones: {save_e}")
-                     # Decide if we should return the modified list anyway or the original list
-                     # Returning modified list might be better as the data is corrected in memory
-            # --- End Backward Compatibility ---
-
-            logger.info(f'Successfully loaded {len(clones_list)} clones from \'{CLONES_FILE}\'.')
-            return clones_list
-
-    except json.JSONDecodeError:
-        logger.error(f"Error decoding JSON from '{CLONES_FILE}'. Returning empty list.")
-        return []
+        clones = []
+        docs = clones_collection.stream()
+        for doc in docs:
+            clone_data = doc.to_dict()
+            clone_data['id'] = doc.id # Ensure the document ID is included
+            clones.append(clone_data)
+        logger.info(f"Successfully loaded {len(clones)} clones from Firestore.")
+        return clones
     except Exception as e:
-        logger.error(f"Error loading clones from '{CLONES_FILE}': {e}")
+        logger.error(f"Error loading clones from Firestore: {e}", exc_info=True)
         return []
 
-def save_clones(clones_list: list) -> bool:
+def save_clones(clones: list):
     """
-    Save clones to the JSON file.
-    
-    Args:
-        clones_list: A list of clone dictionaries
-        
-    Returns:
-        bool: True if successful, False otherwise
+    Saves multiple clone profiles to Firestore.
+    NOTE: This overwrites existing documents with the same ID.
+    Consider using batch writes for efficiency if needed, but individual
+    add/update operations are generally preferred from the API.
     """
+    clones_collection = _get_firestore_collection('clones')
+    if not clones_collection:
+        return False # Error already logged by helper
     try:
-        # Ensure data consistency before saving (optional but good practice)
-        for clone in clones_list:
-            if 'enhanced_category' in clone:
-                 logger.warning(f"Attempting to save clone {clone.get('id')} with deprecated 'enhanced_category'. Removing before save.")
-                 del clone['enhanced_category']
-            category = clone.get('clone_category')
-            if category:
-                 expected_role = CATEGORY_TO_ROLE_MAP.get(category, "Undisclosed")
-                 if clone.get('clone_role') != expected_role:
-                      logger.warning(f"Correcting 'clone_role' for clone {clone.get('id')} before saving.")
-                      clone['clone_role'] = expected_role
-
-        with open(CLONES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(clones_list, f, indent=2)
-        
-        logger.info(f'Successfully saved {len(clones_list)} clones to \'{CLONES_FILE}\'.')
-        return True
-    except (IOError, PermissionError, TypeError) as e:
-        logger.error(f"Error saving clones to '{CLONES_FILE}': {e}")
-        return False
+        # This is less common now; usually add/update are used individually.
+        # If batch saving is truly needed, implement using batch writes.
+        logger.warning("save_clones function called. This might overwrite data unintentionally. Prefer add_clone/update_clone.")
+        count = 0
+        for clone_data in clones:
+            clone_id = clone_data.get('id')
+            if clone_id:
+                # Use set() which creates or overwrites the document
+                clones_collection.document(clone_id).set(clone_data)
+                count += 1
+            else:
+                logger.warning(f"Skipping clone data without ID: {clone_data.get('clone_name', 'N/A')}")
+        logger.info(f"Attempted to save/overwrite {count} clones in Firestore.")
+        return True # Indicate attempt was made
     except Exception as e:
-        logger.error(f'Unexpected error saving clones: {e}')
+        logger.error(f"Error saving clones to Firestore: {e}", exc_info=True)
         return False
 
 def get_clone_by_id(clone_id: str) -> dict | None:
-    """
-    Get a clone by its ID.
-    
-    Args:
-        clone_id: The ID of the clone to retrieve
-        
-    Returns:
-        dict: The clone data if found, None otherwise
-    """
-    clones_list = load_clones() # load_clones now handles backward compatibility
-    
-    for clone in clones_list:
-        if clone.get('id') == clone_id:
-            logger.info(f'Found clone with ID: {clone_id}')
-            return clone
-    
-    logger.warning(f"Clone with ID '{clone_id}' not found.")
-    return None
+    """Retrieves a specific clone profile by its ID from Firestore."""
+    clones_collection = _get_firestore_collection('clones')
+    if not clones_collection:
+        return None # Error already logged by helper
+    if not clone_id:
+        logger.warning("get_clone_by_id called with empty clone_id.")
+        return None
+    try:
+        logger.info(f"Attempting to get clone by ID: {clone_id}") # Log the ID being requested
+        doc_ref = clones_collection.document(clone_id)
+        logger.debug(f"Document reference path: {doc_ref.path}")
+        doc = doc_ref.get()
+        logger.info(f"Firestore doc.exists for ID {clone_id}: {doc.exists}") # Log existence check result
+        if doc.exists:
+            clone_data = doc.to_dict()
+            clone_data['id'] = doc.id # Ensure ID is included
+            # logger.info(f"Found clone with ID: {clone_id}") # Can be noisy
+            return clone_data
+        else:
+            logger.warning(f"Clone with ID {clone_id} not found in Firestore.")
+            return None
+    except Exception as e:
+        logger.error(f"Error getting clone {clone_id} from Firestore: {e}", exc_info=True)
+        return None
 
-def add_clone(new_clone_data: dict) -> bool:
-    """
-    Add a new clone to the clones list.
-    
-    Args:
-        new_clone_data: Dictionary containing the clone data
-        
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    if not isinstance(new_clone_data, dict) or 'id' not in new_clone_data:
-        logger.error('Invalid data provided to add_clone.')
+def add_clone(clone_data: dict) -> bool:
+    """Adds a new clone profile to Firestore."""
+    clones_collection = _get_firestore_collection('clones')
+    if not clones_collection:
+        return False # Error already logged by helper
+    clone_id = clone_data.get('id')
+    if not clone_id:
+        logger.error("Cannot add clone: Missing 'id' in clone data.")
         return False
-    
-    # Ensure consistency before adding
-    if 'enhanced_category' in new_clone_data:
-        del new_clone_data['enhanced_category']
-    category = new_clone_data.get('clone_category')
-    if category:
-        new_clone_data['clone_role'] = CATEGORY_TO_ROLE_MAP.get(category, "Undisclosed")
+    try:
+        # Check if document already exists (optional, set overwrites anyway)
+        # doc_ref = CLONES_COLLECTION.document(clone_id)
+        # if doc_ref.get().exists:
+        #     logger.warning(f"Clone with ID {clone_id} already exists. Overwriting.")
 
-    clones_list = load_clones()
-    
-    if any(c.get('id') == new_clone_data['id'] for c in clones_list):
-        logger.error(f'Attempted to add clone with duplicate ID: {new_clone_data["id"]}')
+        # Use set() to create the document with the specific ID
+        clones_collection.document(clone_id).set(clone_data)
+        logger.info(f"Successfully added clone '{clone_data.get('clone_name', 'N/A')}' with ID {clone_id} to Firestore.")
+        return True
+    except Exception as e:
+        logger.error(f"Error adding clone {clone_id} to Firestore: {e}", exc_info=True)
         return False
-    
-    clones_list.append(new_clone_data)
-    logger.info(f'Adding new clone with ID: {new_clone_data["id"]}')
-    return save_clones(clones_list)
 
-def update_clone(clone_id: str, updated_data: dict) -> bool:
-    """
-    Update an existing clone. Ensures consistency before saving.
-    
-    Args:
-        clone_id: The ID of the clone to update
-        updated_data: Dictionary containing the updated data
-        
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    # Ensure consistency in the update data itself
-    if 'enhanced_category' in updated_data:
-        del updated_data['enhanced_category']
-    category = updated_data.get('clone_category')
-    if category:
-        updated_data['clone_role'] = CATEGORY_TO_ROLE_MAP.get(category, "Undisclosed")
-
-    clones_list = load_clones()
-    updated = False
-    
-    for i, clone in enumerate(clones_list):
-        if clone.get('id') == clone_id:
-            # Update the clone data
-            clones_list[i].update(updated_data)
-            updated = True
-            logger.info(f'Updating clone with ID: {clone_id}')
-            break
-    
-    if not updated:
-        logger.error(f'Attempted to update non-existent clone with ID: {clone_id}')
+def update_clone(clone_id: str, update_data: dict) -> bool:
+    """Updates specific fields of an existing clone profile in Firestore."""
+    clones_collection = _get_firestore_collection('clones')
+    if not clones_collection:
+        return False # Error already logged by helper
+    if not clone_id:
+        logger.warning("update_clone called with empty clone_id.")
         return False
-    
-    # save_clones will perform a final consistency check
-    return save_clones(clones_list)
+    try:
+        doc_ref = clones_collection.document(clone_id)
+        # Use update() to modify specific fields without overwriting the whole doc
+        # Note: update() will fail if the document doesn't exist.
+        # If you want "upsert" behavior (create if not exists, update if exists),
+        # you might use doc_ref.set(update_data, merge=True) instead.
+        # Let's stick to update() for now, assuming the clone exists.
+        doc_ref.update(update_data)
+        logger.info(f"Successfully updated clone with ID {clone_id} in Firestore.")
+        return True
+    except firestore.NotFound:
+         logger.error(f"Error updating clone: Document with ID {clone_id} not found.")
+         return False
+    except Exception as e:
+        logger.error(f"Error updating clone {clone_id} in Firestore: {e}", exc_info=True)
+        return False
 
 def delete_clone_data(clone_id: str) -> bool:
-    """
-    Delete a clone by its ID.
-    
-    Args:
-        clone_id: The ID of the clone to delete
-        
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    clones_list = load_clones()
-    initial_length = len(clones_list)
-    
-    clones_list = [clone for clone in clones_list if clone.get('id') != clone_id]
-    
-    if len(clones_list) == initial_length:
-        logger.error(f'Attempted to delete non-existent clone with ID: {clone_id}')
+    """Deletes a clone profile from Firestore by its ID."""
+    clones_collection = _get_firestore_collection('clones')
+    if not clones_collection:
+        return False # Error already logged by helper
+    if not clone_id:
+        logger.warning("delete_clone_data called with empty clone_id.")
         return False
-    
-    logger.info(f'Deleting clone data with ID: {clone_id}')
-    return save_clones(clones_list)
+    try:
+        doc_ref = clones_collection.document(clone_id)
+        doc_ref.delete()
+        logger.info(f"Successfully deleted clone data with ID: {clone_id} from Firestore.")
+        return True
+    except Exception as e:
+        logger.error(f"Error deleting clone {clone_id} from Firestore: {e}", exc_info=True)
+        return False
+
+# --- Initialization (Load clones on startup - less critical now) ---
+# Initial load might still be useful for some checks or caching, but primary operations hit DB.
+# logger.info("Initial load of clones from Firestore...")
+# clones_list = load_clones()
+# logger.info(f"Loaded {len(clones_list)} clones initially.")

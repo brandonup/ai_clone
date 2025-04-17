@@ -1,32 +1,67 @@
 """
 Backend Flask API for AI Clone MVP
 """
-from flask import Flask, request, session, jsonify # Removed: render_template, redirect, url_for, flash
-from flask_cors import CORS # Added CORS
+from flask import Flask, request, session, jsonify
+from flask_cors import CORS
 from dotenv import load_dotenv
 import os
 import json
 import traceback
 import uuid
 from datetime import datetime
-import threading # Added for background tasks
-from qdrant_client import QdrantClient, models # Added Qdrant imports
-from qdrant_client.http.models import Distance, VectorParams # Added Qdrant imports
+import threading
 import logging
+import importlib
+
+from logging.handlers import RotatingFileHandler # Use RotatingFileHandler for better log management
 
 # Load environment variables
 load_dotenv()
 
-# Set up logging to file
+# --- Initialize Flask app FIRST ---
+app = Flask(__name__)
+
+# --- Configure app.logger (writes to backend/app_flask.log) ---
+log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# Corrected path: Create log file directly in the backend directory
+file_handler = RotatingFileHandler('app_flask.log', maxBytes=1024*1024*5, backupCount=2)
+file_handler.setFormatter(log_formatter)
+file_handler.setLevel(logging.DEBUG)
+if not app.logger.handlers: # Avoid adding duplicate handlers on reloads
+    app.logger.addHandler(file_handler)
+app.logger.setLevel(logging.DEBUG)
+# --- End app.logger configuration ---
+
+# --- Configure root logger (writes to backend/app_debug.log) ---
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename='app_debug.log', # Keep log file in backend directory
+    filename='app_debug.log', # Corrected path
     filemode='w'
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) # Module-level logger for non-request-specific logs
+# --- End root logger configuration ---
 
-# Import utility modules (adjust paths if necessary after move)
+# --- Import utility modules with placeholders ---
+enhance_persona = None
+process_drive_folder = None
+save_conversation = None
+load_conversation = None
+ConversationBufferWindowMemory = None
+format_conversation_history = None
+run_adaptive_rag = None
+load_clones = lambda: []
+save_clones = lambda _: None
+get_clone_by_id = lambda _: None
+add_clone = lambda _: False
+update_clone = lambda _, __: False
+delete_clone_data = lambda _: False
+CATEGORY_TO_ROLE_MAP = {}
+ingest_document = None
+delete_clone_documents = None
+delete_all_documents_ragie = None
+ragie_utils = None
+
 try:
     from utils.llm_orchestrator import enhance_persona
     from utils.google_drive_utils import process_drive_folder
@@ -38,226 +73,223 @@ try:
         add_clone, update_clone, delete_clone_data,
         CATEGORY_TO_ROLE_MAP
     )
-    # Determine which RAG implementation to use (for ingestion only now)
     use_custom_rag = os.getenv("USE_CUSTOM_RAG", "false").lower() == "true"
     if use_custom_rag:
         logger.info("Using custom RAG implementation for ingestion")
-        from utils.custom_rag_utils import ingest_document
+        from utils.custom_rag_utils import ingest_document # Assuming custom RAG doesn't need partition changes yet
     else:
-        logger.info("Using Ragie.ai implementation for ingestion")
-        from utils.ragie_utils import ingest_document
+        logger.info("Using Ragie.ai implementation")
+        import utils.ragie_utils
+        ragie_utils = utils.ragie_utils
+        # Import functions needed later
+        from utils.ragie_utils import ingest_document, delete_clone_documents, delete_all_documents_ragie
+
 except ImportError as e:
-    logger.error(f"Error importing utility modules: {e}. Ensure utils are in the backend directory.")
-    # Depending on the severity, you might want to exit or handle this differently
-    enhance_persona = None # Define placeholders to avoid NameErrors later if imports fail
-    process_drive_folder = None
-    save_conversation = None
-    load_conversation = None
-    ConversationBufferWindowMemory = None
-    format_conversation_history = None
-    run_adaptive_rag = None
-    load_clones = lambda: []
-    save_clones = lambda _: None
-    get_clone_by_id = lambda _: None
-    add_clone = lambda _: False
-    update_clone = lambda _, __: False
-    delete_clone_data = lambda _: False
-    CATEGORY_TO_ROLE_MAP = {}
-    ingest_document = None
+    logger.error(f"Error importing utility modules: {e}. Ensure utils are in the backend directory.", exc_info=True)
 
-
-# Qdrant Configuration
-QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-EMBEDDING_DIMENSION = 1536  # OpenAI embedding dimension
-
-def create_new_qdrant_collection(collection_name: str) -> bool:
-    """Creates a new Qdrant collection with the specified name."""
-    if not QDRANT_URL or not QDRANT_API_KEY:
-        logger.error("QDRANT_URL or QDRANT_API_KEY environment variables not set. Cannot create collection.")
-        return False
-    try:
-        client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=60.0) # Increased timeout
-        collections = client.get_collections().collections
-        collection_names = [collection.name for collection in collections]
-        if collection_name in collection_names:
-             logger.warning(f"Qdrant collection '{collection_name}' already exists. Skipping creation.")
-             return True
-        client.create_collection(
-            collection_name=collection_name,
-            vectors_config=VectorParams(size=EMBEDDING_DIMENSION, distance=Distance.COSINE)
-        )
-        logger.info(f"Successfully created Qdrant collection: {collection_name}")
-        return True
-    except Exception as e:
-        logger.error(f"Error creating Qdrant collection '{collection_name}': {e}")
-        return False
-
-# Initialize Flask app
-app = Flask(__name__)
-# Add these lines for session cookie configuration:
+# --- Configure Flask App Settings (after app is created) ---
+# app = Flask(__name__) # Already created above
 app.config.update(
     SESSION_COOKIE_SAMESITE='Lax',
-    SESSION_COOKIE_SECURE=False,  # Must be False for HTTP
-    SESSION_COOKIE_HTTPONLY=True, # Good practice
-    SESSION_COOKIE_DOMAIN='localhost' # <<< ADD THIS
+    SESSION_COOKIE_SECURE=False,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_DOMAIN=None # Align with frontend for localhost development
 )
-CORS(app, supports_credentials=True) # Keep CORS after config
+CORS(app, supports_credentials=True)
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 
-
-# --- Helper Function to Get Active Clone ---
+# --- Helper Function ---
 def get_active_clone_from_session():
-    """Gets the active clone data based on the ID stored in the session."""
     active_clone_id = session.get('active_clone_id')
-    if not active_clone_id:
+    if not active_clone_id or not get_clone_by_id:
         return None
     return get_clone_by_id(active_clone_id)
 
 # --- Development Setup Bypass ---
-# Check for dev_config.json to bypass setup during development
 try:
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(base_dir, 'dev_config.json')
     with open(config_path, 'r') as f:
         dev_config = json.load(f)
         dev_clone_name = dev_config.get("clone_name")
-        # ... (rest of dev config loading logic - kept for local dev) ...
-        # This section primarily affects local testing and doesn't set a global state anymore.
-        # It might pre-populate clones.json if needed for the first run.
-        # The actual 'active' clone for API requests will depend on the session.
         logger.warning("!!! dev_config.json found. It might influence clones.json on first run. API relies on session['active_clone_id'] !!!")
-        # Simplified dev logic: ensure the dev clone exists in clones.json
-        clones = load_clones()
-        dev_clone_exists = any(c.get("clone_name") == dev_clone_name for c in clones)
-        if not dev_clone_exists and dev_clone_name:
-             # Simplified creation logic if needed for dev
-             logger.info(f"Attempting to create dev clone '{dev_clone_name}' from dev_config.json if it doesn't exist.")
-             # ... (add simplified creation logic from original file if essential for dev setup) ...
-             pass # Placeholder
-
+        if load_clones:
+            clones = load_clones()
+            dev_clone_exists = any(c.get("clone_name") == dev_clone_name for c in clones)
+            if not dev_clone_exists and dev_clone_name:
+                 logger.info(f"Attempting to create dev clone '{dev_clone_name}' from dev_config.json if it doesn't exist.")
+                 pass # Placeholder for dev creation logic
 except FileNotFoundError:
     logger.info("dev_config.json not found, proceeding normally.")
 except Exception as e:
-    logger.error(f"Error reading or processing dev_config.json: {e}")
-# --- End Development Setup Bypass ---
-
+    logger.error(f"Error reading or processing dev_config.json: {e}", exc_info=True)
 
 # === API Endpoints ===
 
 @app.route('/api/clones', methods=['GET'])
-def get_clones():
+def get_clones_api():
     """API endpoint to get the list of all clones."""
-    clones = load_clones()
-    # Optionally filter/clean data before sending
-    return jsonify(clones)
+    try:
+        if not load_clones:
+            return jsonify({"error": "Server configuration error (load_clones)."}), 500
+        clones = load_clones()
+        return jsonify(clones)
+    except Exception as e:
+        logger.error(f"Error loading clones: {e}", exc_info=True)
+        return jsonify({"error": "Failed to load clone list."}), 500
 
 @app.route('/api/clones/<clone_id>', methods=['GET'])
-def get_clone_details(clone_id):
+def get_clone_details_api(clone_id):
     """API endpoint to get details for a specific clone."""
-    clone = get_clone_by_id(clone_id)
-    if not clone:
-        return jsonify({"error": "Clone not found"}), 404
-    # Optionally filter/clean data
-    return jsonify(clone)
-
+    try:
+        if not get_clone_by_id:
+            return jsonify({"error": "Server configuration error (get_clone_by_id)."}), 500
+        clone = get_clone_by_id(clone_id)
+        if not clone:
+            return jsonify({"error": "Clone not found"}), 404
+        return jsonify(clone)
+    except Exception as e:
+        logger.error(f"Error getting clone details for {clone_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to get clone details."}), 500
 
 @app.route('/api/clones', methods=['POST'])
 def create_clone_api():
     """API endpoint to create a new clone."""
-    data = request.json
-    name = data.get('clone_name')
-    original_persona = data.get('clone_persona')
-    role = data.get('clone_role') # Expecting role directly now
-    clone_description = data.get('clone_description', '')
-    drive_folder_url = data.get('drive_folder', '').strip()
+    logger.info("Entering create_clone_api function")
+    try:
+        data = request.json
+        if not data:
+            logger.error("Request data is missing or not JSON.")
+            return jsonify({"error": "Invalid request data."}), 400
+        logger.debug(f"Request data: {data}")
 
-    if not name or not original_persona or not role:
-        return jsonify({"error": "Missing required fields: clone_name, clone_persona, clone_role"}), 400
+        # Extract data (coach_name removed)
+        name = data.get('clone_name')
+        original_persona = data.get('clone_persona')
+        role = data.get('clone_role')
+        clone_description = data.get('clone_description', '')
+        drive_folder_url = data.get('drive_folder', '').strip()
 
-    # --- Enhance Persona ---
-    logger.info(f"Attempting to enhance persona for new clone: {name} with role: {role}")
-    enhanced_persona = enhance_persona(name, role, original_persona) if enhance_persona else None
-    enhanced_persona_to_use = enhanced_persona if enhanced_persona else original_persona
+        # Validation (coach_name removed)
+        if not name or not original_persona or not role:
+            missing_fields = [f for f in ['clone_name', 'clone_persona', 'clone_role'] if not data.get(f)]
+            logger.error(f"Missing required fields in request: {missing_fields}")
+            return jsonify({"error": f"Missing required fields: {', '.join(missing_fields)}"}), 400
 
-    category = role # Store role as category
+        # --- Enhance Persona ---
+        logger.info(f"Attempting to enhance persona for new clone: {name} with role: {role}")
+        enhanced_persona_to_use = original_persona # Default
+        if enhance_persona:
+            try:
+                enhanced_persona_result = enhance_persona(name, role, original_persona)
+                if enhanced_persona_result:
+                    enhanced_persona_to_use = enhanced_persona_result
+                logger.info("Persona enhancement step completed.")
+            except Exception as enhance_e:
+                logger.error(f"Error during persona enhancement: {enhance_e}", exc_info=True)
+                logger.warning("Proceeding with original persona due to enhancement error.")
+        else:
+             logger.warning("enhance_persona function not available.")
 
-    new_clone_id = str(uuid.uuid4())
-    vectorstore_name = f"clone_{new_clone_id}" # Use the new UUID
+        category = role # Store role as category
 
-    new_clone_data = {
-        "id": new_clone_id,
-        "clone_name": name,
-        "clone_description": clone_description,
-        "original_persona": original_persona,
-        "enhanced_persona": enhanced_persona_to_use,
-        "clone_persona": enhanced_persona_to_use,
-        "clone_category": category,
-        "clone_role": role,
-        "drive_folder": drive_folder_url,
-        "vectorstore_name": vectorstore_name
-    }
+        new_clone_id = str(uuid.uuid4())
+        # This identifier is used for Ragie metadata AND forms part of the partition name
+        ragie_collection_identifier = f"clone_{new_clone_id}"
 
-    # --- Create Qdrant Collection ---
-    collection_created = create_new_qdrant_collection(vectorstore_name)
-    if not collection_created:
-         return jsonify({"error": "Failed to create vector storage for the clone."}), 500
+        new_clone_data = {
+            "id": new_clone_id,
+            "clone_name": name,
+            "clone_description": clone_description,
+            "original_persona": original_persona,
+            "enhanced_persona": enhanced_persona_to_use,
+            "clone_persona": enhanced_persona_to_use,
+            "clone_category": category,
+            "clone_role": role,
+            # "coach_name": coach_name, # Removed
+            "drive_folder": drive_folder_url,
+            "vectorstore_name": ragie_collection_identifier # Store the identifier
+        }
+        logger.debug(f"Prepared new clone data: {new_clone_data}")
 
-    # --- Determine initial ingestion status ---
-    if drive_folder_url:
-        new_clone_data['ingestion_status'] = 'pending'
-        new_clone_data['files_processed'] = 0
-        new_clone_data['files_attempted'] = 0
-    else:
-        new_clone_data['ingestion_status'] = 'complete'
+        # --- Determine initial ingestion status ---
+        if drive_folder_url:
+            new_clone_data['ingestion_status'] = 'pending'
+            new_clone_data['files_processed'] = 0
+            new_clone_data['files_attempted'] = 0
+        else:
+            new_clone_data['ingestion_status'] = 'complete'
+        logger.info(f"Determined ingestion status: {new_clone_data['ingestion_status']}")
 
-    # --- Add Clone to JSON ---
-    if add_clone(new_clone_data):
-        logger.info(f"Successfully added clone '{name}' with ID {new_clone_id}")
-        # --- Start Background Ingestion ---
-        if new_clone_data['ingestion_status'] == 'pending':
-            logger.info(f"Starting background ingestion thread for clone {new_clone_id}")
-            thread = threading.Thread(target=background_ingestion_task, args=(new_clone_data.copy(),))
-            thread.daemon = True
-            thread.start()
-        return jsonify({"message": "Clone created successfully", "clone": new_clone_data}), 201
-    else:
-         logger.error(f"Failed to add clone '{name}' to clones.json")
-         # Consider deleting the Qdrant collection if saving fails
-         return jsonify({"error": "Failed to save clone profile."}), 500
-
-
-# --- Background Task for Document Ingestion (Keep as is) ---
-def background_ingestion_task(clone_data: dict):
-    """Processes Google Drive folder and ingests documents in the background."""
-    drive_folder_url = clone_data.get("drive_folder")
-    collection_name = clone_data.get("vectorstore_name")
-    clone_id = clone_data.get("id")
-    clone_name = clone_data.get("clone_name", "Unknown") # For logging
-
-    if not drive_folder_url or not collection_name or not clone_id or not process_drive_folder or not ingest_document:
-        logger.error(f"Missing data or functions for background ingestion for clone {clone_id}")
-        # Update status to error
+        # --- Add Clone to JSON ---
+        logger.info(f"Attempting to add clone '{name}' to storage.")
+        added_successfully = False
         try:
-            clones = load_clones()
-            for i, c in enumerate(clones):
-                if c.get('id') == clone_id:
-                    clones[i]['ingestion_status'] = 'error'
-                    clones[i]['ingestion_error'] = 'Missing essential data or function for ingestion.'
-                    save_clones(clones)
-                    break
-        except Exception as status_e:
-             logger.error(f"Failed to update error status for clone {clone_id}: {status_e}")
-        return
+            if not add_clone:
+                 logger.error("add_clone function is not available.")
+                 return jsonify({"error": "Internal server configuration error (add_clone)."}), 500
+            added_successfully = add_clone(new_clone_data)
+        except Exception as add_e:
+             logger.error(f"Error calling add_clone: {add_e}", exc_info=True)
+             return jsonify({"error": "Internal server error during clone saving."}), 500
 
-    logger.info(f"Starting background ingestion for clone '{clone_name}' (ID: {clone_id}) into collection '{collection_name}'")
-    ingestion_status = "complete"
-    error_message = None
+        if added_successfully:
+            logger.info(f"Successfully added clone '{name}' with ID {new_clone_id} to storage.")
+            # --- Start Background Ingestion ---
+            if new_clone_data['ingestion_status'] == 'pending':
+                logger.info(f"Starting background ingestion thread for clone {new_clone_id}")
+                try:
+                    if not background_ingestion_task:
+                         logger.error("background_ingestion_task function not available.")
+                    else:
+                        # Pass the necessary data (no coach_name needed)
+                        thread = threading.Thread(target=background_ingestion_task, args=(new_clone_data.copy(),))
+                        thread.daemon = True
+                        thread.start()
+                        logger.info("Background ingestion thread started.")
+                except Exception as thread_e:
+                     logger.error(f"Failed to start background ingestion thread: {thread_e}", exc_info=True)
+            return jsonify({"message": "Clone created successfully", "clone": new_clone_data}), 201
+        else:
+             logger.error(f"add_clone function returned False for clone '{name}'.")
+             return jsonify({"error": "Failed to save clone profile (add_clone returned false)."}), 500
+
+    except Exception as e: # Catch-all for the entire route
+        logger.error(f"Unexpected error in create_clone_api: {e}", exc_info=True)
+        return jsonify({"error": "An unexpected internal server error occurred."}), 500
+
+# --- Background Task for Document Ingestion ---
+def background_ingestion_task(clone_data: dict):
+    """Processes Google Drive folder and ingests documents in the background using Ragie."""
+    ingestion_status = "error"
+    error_message = "Task did not complete."
     files_processed = 0
     files_attempted = 0
+    clone_id = clone_data.get("id", "UNKNOWN_ID")
 
     try:
+        drive_folder_url = clone_data.get("drive_folder")
+        ragie_collection_identifier = clone_data.get("vectorstore_name") # Contains clone_id part
+        clone_name = clone_data.get("clone_name", "Unknown")
+        # coach_name = clone_data.get("coach_name") # Removed
+
+        # Check if necessary functions are imported correctly
+        if not process_drive_folder or not ingest_document:
+             logger.error(f"Missing essential functions for background ingestion (clone: {clone_id}).")
+             error_message = "Server configuration error: Missing ingestion functions."
+             return # Use return to jump to finally
+
+        # Validation (coach_name removed)
+        if not drive_folder_url or not ragie_collection_identifier or not clone_id or not clone_name:
+            logger.error(f"Missing data (drive_url, identifier, clone_id, clone_name) for background ingestion for clone {clone_id}")
+            error_message = "Missing essential data for ingestion."
+            return # Use return to jump to finally
+
+        logger.info(f"Starting background ingestion for clone '{clone_name}' (ID: {clone_id}) using identifier '{ragie_collection_identifier}'")
+        ingestion_status = "complete"
+        error_message = None
+
         logger.info(f"Background Task: Processing Google Drive folder: {drive_folder_url}")
         files = process_drive_folder(drive_folder_url)
         files_attempted = len(files) if files else 0
@@ -270,247 +302,342 @@ def background_ingestion_task(clone_data: dict):
                 try:
                     file_name = file.get('name')
                     file_content = file.get('content')
+                    if not file_name or file_content is None:
+                         logger.warning(f"Skipping file with missing name or content in clone {clone_id}: {file.get('id', 'N/A')}")
+                         continue
+
+                    # Call ingest_document with clone_name instead of coach_name
                     response = ingest_document(
                         file_content=file_content,
                         filename=file_name,
-                        collection_name=collection_name,
+                        clone_name=clone_name, # Pass clone_name
+                        collection_name=ragie_collection_identifier, # Pass the identifier
                         delete_after_ingestion=True
                     )
-                    if response and response.get("status") == "success":
+
+                    ingestion_successful = False
+                    if isinstance(response, dict) and response.get("status") == "success":
+                         ingestion_successful = True
+                    elif hasattr(response, 'id'):
+                         ingestion_successful = True
+                         logger.info(f"Background Task: Ragie response object received with ID: {getattr(response, 'id')} for file {file_name}")
+                    else:
+                         logger.warning(f"Background Task: Unexpected response type from ingest_document for file {file_name}: {type(response)}")
+
+                    if ingestion_successful:
                         logger.info(f"Background Task: Document {file_name} uploaded successfully for clone {clone_id}")
                         files_processed += 1
                     else:
                          logger.error(f"Background Task: Failed to ingest document {file_name} for clone {clone_id}. Response: {response}")
                          ingestion_status = "error"
                          error_message = f"Error ingesting file: {file_name}. Check logs."
-                except Exception as e:
-                    logger.error(f"Background Task: Error uploading {file_name} for clone {clone_id}: {str(e)}")
+                         # break # Optional: stop on first error
+                except Exception as e_file:
+                    logger.error(f"Background Task: Error uploading file '{file_name}' for clone {clone_id}: {str(e_file)}", exc_info=True)
                     ingestion_status = "error"
                     error_message = f"Error processing file: {file_name}. Check logs."
-            logger.info(f"Background Task: Finished processing {files_attempted} files for clone {clone_id}. {files_processed} succeeded. Status: {ingestion_status}")
-    except Exception as e:
-        logger.error(f"Background Task: Error processing Google Drive folder for clone {clone_id}: {str(e)}")
+                    # break # Optional: stop on first error
+            logger.info(f"Background Task: Finished processing {files_attempted} files for clone {clone_id}. {files_processed} succeeded. Final Status: {ingestion_status}")
+
+    except Exception as e_task:
+        logger.error(f"Background Task: Error during ingestion process for clone {clone_id}: {str(e_task)}", exc_info=True)
         ingestion_status = "error"
-        error_message = f"Error processing Google Drive folder: {str(e)}"
+        error_message = f"Error during ingestion task: {str(e_task)}"
+        if 'files_attempted' not in locals(): files_attempted = 0
+        if 'files_processed' not in locals(): files_processed = 0
+
     finally:
         # Update the clone status in clones.json
         try:
+            if not load_clones or not save_clones:
+                 logger.error(f"Cannot update clone status for {clone_id}: load/save functions unavailable.")
+                 return
+
             clones = load_clones()
             updated = False
             for i, c in enumerate(clones):
                 if c.get('id') == clone_id:
                     clones[i]['ingestion_status'] = ingestion_status
-                    if error_message: clones[i]['ingestion_error'] = error_message
+                    clones[i]['ingestion_error'] = error_message
                     clones[i]['files_processed'] = files_processed
                     clones[i]['files_attempted'] = files_attempted
                     save_clones(clones)
-                    logger.info(f"Background Task: Updated ingestion status to '{ingestion_status}' for clone {clone_id}")
+                    logger.info(f"Background Task: Updated final ingestion status to '{ingestion_status}' for clone {clone_id}")
                     updated = True
                     break
             if not updated: logger.error(f"Background Task: Could not find clone {clone_id} to update status.")
-        except Exception as status_e: logger.error(f"Background Task: Failed to update final status for clone {clone_id}: {status_e}")
+        except Exception as status_e: logger.error(f"Background Task: Failed to update final status for clone {clone_id}: {status_e}", exc_info=True)
 # --- End Background Task ---
 
 
 @app.route('/api/clones/<clone_id>', methods=['PUT'])
 def manage_clone_api(clone_id):
     """API endpoint to update an existing clone."""
-    clone = get_clone_by_id(clone_id)
-    if not clone:
-        return jsonify({"error": "Clone not found"}), 404
+    try:
+        if not get_clone_by_id or not update_clone:
+            logger.error("get_clone_by_id or update_clone function not available.")
+            return jsonify({"error": "Internal server configuration error (update_clone)."}), 500
 
-    data = request.json
-    name = data.get('clone_name')
-    original_persona = data.get('original_persona')
-    role = data.get('clone_role')
-    clone_description = data.get('clone_description', clone.get('clone_description')) # Keep old if not provided
-    drive_folder_url = data.get('drive_folder', clone.get('drive_folder')).strip() # Keep old if not provided
+        clone = get_clone_by_id(clone_id)
+        if not clone:
+            return jsonify({"error": "Clone not found"}), 404
 
-    if not name or not original_persona or not role:
-        return jsonify({"error": "Missing required fields: clone_name, original_persona, clone_role"}), 400
+        data = request.json
+        if not data:
+            return jsonify({"error": "Invalid request data."}), 400
 
-    # --- Re-enhance Persona if changed ---
-    enhanced_persona_to_use = clone.get('enhanced_persona')
-    persona_or_role_changed = (original_persona != clone.get('original_persona') or role != clone.get('clone_role'))
+        name = data.get('clone_name')
+        original_persona = data.get('original_persona')
+        role = data.get('clone_role')
+        clone_description = data.get('clone_description', clone.get('clone_description'))
+        drive_folder_url = data.get('drive_folder', clone.get('drive_folder')).strip()
 
-    if persona_or_role_changed and enhance_persona:
-        logger.info(f"Persona or role changed for clone '{name}'. Re-enhancing.")
-        enhanced_persona = enhance_persona(name, role, original_persona)
-        if not enhanced_persona:
-            logger.warning(f"Persona re-enhancement failed for clone '{name}'. Using original.")
-            enhanced_persona_to_use = original_persona
+        if not name or not original_persona or not role:
+            missing_fields = [f for f in ['clone_name', 'original_persona', 'clone_role'] if not data.get(f)]
+            return jsonify({"error": f"Missing required fields: {', '.join(missing_fields)}"}), 400
+
+        # --- Re-enhance Persona if changed ---
+        enhanced_persona_to_use = clone.get('enhanced_persona')
+        persona_or_role_changed = (original_persona != clone.get('original_persona') or role != clone.get('clone_role'))
+
+        if persona_or_role_changed and enhance_persona:
+            logger.info(f"Persona or role changed for clone '{name}'. Re-enhancing.")
+            try:
+                enhanced_persona_result = enhance_persona(name, role, original_persona)
+                if enhanced_persona_result:
+                    enhanced_persona_to_use = enhanced_persona_result
+                logger.info(f"Persona re-enhanced successfully for clone: {name}")
+            except Exception as enhance_e:
+                 logger.error(f"Error during persona re-enhancement: {enhance_e}", exc_info=True)
+                 logger.warning("Proceeding with previously enhanced or original persona due to re-enhancement error.")
+                 enhanced_persona_to_use = clone.get('enhanced_persona', original_persona) # Fallback
         else:
-            logger.info(f"Persona re-enhanced successfully for clone: {name}")
-            enhanced_persona_to_use = enhanced_persona
-    else:
-         logger.info(f"Original persona and role unchanged or enhance_persona unavailable for clone '{name}'.")
+             logger.info(f"Original persona and role unchanged or enhance_persona unavailable for clone '{name}'.")
 
-    category = role # Store role as category
+        category = role
 
-    updated_data = {
-        "clone_name": name,
-        "clone_description": clone_description,
-        "original_persona": original_persona,
-        "enhanced_persona": enhanced_persona_to_use,
-        "clone_persona": enhanced_persona_to_use,
-        "clone_category": category,
-        "clone_role": role,
-        "drive_folder": drive_folder_url
-        # Keep existing vectorstore_name, ingestion_status etc.
-    }
+        updated_data = {
+            "clone_name": name,
+            "clone_description": clone_description,
+            "original_persona": original_persona,
+            "enhanced_persona": enhanced_persona_to_use,
+            "clone_persona": enhanced_persona_to_use,
+            "clone_category": category,
+            "clone_role": role,
+            "drive_folder": drive_folder_url
+        }
 
-    # Update the clone (update_clone should merge the dicts)
-    if update_clone(clone_id, updated_data):
-        updated_clone_data = get_clone_by_id(clone_id) # Get merged data
-        return jsonify({"message": "Clone updated successfully", "clone": updated_clone_data})
-    else:
-         return jsonify({"error": "Error updating clone"}), 500
+        if update_clone(clone_id, updated_data):
+            updated_clone_data = get_clone_by_id(clone_id)
+            return jsonify({"message": "Clone updated successfully", "clone": updated_clone_data})
+        else:
+             logger.error(f"update_clone returned False for clone {clone_id}")
+             return jsonify({"error": "Error updating clone"}), 500
+    except Exception as e:
+        logger.error(f"Unexpected error in manage_clone_api for {clone_id}: {e}", exc_info=True)
+        return jsonify({"error": "An unexpected internal server error occurred."}), 500
 
 
 @app.route('/api/clone_status/<clone_id>', methods=['GET'])
 def clone_status_api(clone_id):
     """API endpoint to check the ingestion status of a clone."""
-    clone = get_clone_by_id(clone_id)
-    if not clone:
-        return jsonify({"error": "Clone not found"}), 404
+    try:
+        if not get_clone_by_id:
+             logger.error("get_clone_by_id function not available.")
+             return jsonify({"error": "Internal server configuration error (get_clone_by_id)."}), 500
 
-    status = clone.get('ingestion_status', 'unknown')
-    error_msg = clone.get('ingestion_error')
-    files_processed = clone.get('files_processed')
-    files_attempted = clone.get('files_attempted')
+        clone = get_clone_by_id(clone_id)
+        if not clone:
+            return jsonify({"error": "Clone not found"}), 404
 
-    response_data = {"status": status}
-    if error_msg: response_data["error_message"] = error_msg
-    if files_processed is not None: response_data["files_processed"] = files_processed
-    if files_attempted is not None: response_data["files_attempted"] = files_attempted
+        status = clone.get('ingestion_status', 'unknown')
+        error_msg = clone.get('ingestion_error')
+        files_processed = clone.get('files_processed')
+        files_attempted = clone.get('files_attempted')
 
-    return jsonify(response_data)
+        response_data = {"status": status}
+        if error_msg: response_data["error_message"] = error_msg
+        if files_processed is not None: response_data["files_processed"] = files_processed
+        if files_attempted is not None: response_data["files_attempted"] = files_attempted
+
+        return jsonify(response_data)
+    except Exception as e:
+        logger.error(f"Error getting clone status for {clone_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to get clone status."}), 500
 
 
 @app.route('/api/clones/<clone_id>', methods=['DELETE'])
 def delete_clone_api(clone_id):
     """API endpoint to delete a clone."""
-    # Get the clone data before deletion to access vectorstore_name
-    clone = get_clone_by_id(clone_id)
-    if not clone:
-        return jsonify({"error": "Clone not found"}), 404
-    
-    # Get the vectorstore_name (collection name) for this clone
-    vectorstore_name = clone.get('vectorstore_name')
-    logger.info(f"DELETE API: Found clone {clone_id} with vectorstore_name {vectorstore_name}")
-    
-    # Delete documents from Ragie.ai
-    deletion_result = {"status": "skipped", "message": "Document deletion skipped"}
     try:
-        # Import the delete_clone_documents function
-        logger.info("DELETE API: Attempting to import delete_clone_documents function")
-        try:
-            from utils.ragie_utils import delete_clone_documents
-            logger.info("DELETE API: Successfully imported delete_clone_documents function")
-        except ImportError as ie:
-            logger.error(f"DELETE API: ImportError when importing delete_clone_documents: {ie}")
-            raise
-        except Exception as e:
-            logger.error(f"DELETE API: Unexpected error when importing delete_clone_documents: {e}")
-            raise
-        
-        # Delete documents associated with this clone
-        logger.info(f"DELETE API: Calling delete_clone_documents for clone {clone_id} with vectorstore_name {vectorstore_name}")
-        deletion_result = delete_clone_documents(vectorstore_name)
-        logger.info(f"DELETE API: Document deletion result: {deletion_result}")
-    except ImportError as ie:
-        logger.error(f"DELETE API: Could not import delete_clone_documents function: {ie}")
+        if not get_clone_by_id or not delete_clone_data:
+             logger.error("get_clone_by_id or delete_clone_data function not available.")
+             return jsonify({"error": "Internal server configuration error (clone deletion)."}), 500
+
+        clone = get_clone_by_id(clone_id)
+        if not clone:
+            return jsonify({"error": "Clone not found"}), 404
+
+        ragie_collection_identifier = clone.get('vectorstore_name')
+        logger.info(f"DELETE API: Found clone {clone_id} with Ragie identifier {ragie_collection_identifier}")
+
+        # Delete documents from Ragie.ai
+        deletion_result = {"status": "skipped", "message": "Document deletion skipped"}
+        if ragie_collection_identifier:
+            try:
+                if delete_clone_documents:
+                    logger.info(f"DELETE API: Calling delete_clone_documents for clone {clone_id} with identifier {ragie_collection_identifier}")
+                    deletion_result = delete_clone_documents(ragie_collection_identifier)
+                    logger.info(f"DELETE API: Document deletion result: {deletion_result}")
+                else:
+                     logger.error("DELETE API: delete_clone_documents function not available.")
+                     deletion_result = {"status": "error", "message": "Deletion function not available."}
+            except Exception as e:
+                logger.error(f"DELETE API: Error deleting documents for clone {clone_id}: {str(e)}", exc_info=True)
+                deletion_result = {"status": "error", "message": f"Error during deletion: {str(e)}"}
+        else:
+             logger.warning(f"DELETE API: No Ragie identifier found for clone {clone_id}. Skipping document deletion.")
+
+        # Delete the clone data from clones.json
+        if delete_clone_data(clone_id):
+            logger.info(f"Successfully deleted clone data for {clone_id}")
+            if session.get('active_clone_id') == clone_id:
+                session.pop('active_clone_id', None)
+                session.pop('conversation_id', None)
+            return jsonify({
+                "message": "Clone deleted successfully",
+                "document_deletion": deletion_result
+            })
+        else:
+            logger.error(f"delete_clone_data returned False for clone {clone_id}")
+            return jsonify({"error": "Error deleting clone data", "document_deletion": deletion_result}), 500
     except Exception as e:
-        logger.error(f"DELETE API: Error deleting documents for clone {clone_id}: {str(e)}")
-        import traceback
-        logger.error(f"DELETE API: Traceback: {traceback.format_exc()}")
-    
-    # Delete the clone data
-    if delete_clone_data(clone_id):
-        # Clear active clone from session if it was the one deleted
-        if session.get('active_clone_id') == clone_id:
-            session.pop('active_clone_id', None)
-            session.pop('conversation_id', None) # Also clear conversation
-        
-        # Return success with document deletion info
-        return jsonify({
-            "message": "Clone deleted successfully",
-            "document_deletion": deletion_result
-        })
-    else:
-        return jsonify({"error": "Error deleting clone", "document_deletion": deletion_result}), 500
+        logger.error(f"Unexpected error in delete_clone_api for {clone_id}: {e}", exc_info=True)
+        return jsonify({"error": "An unexpected internal server error occurred."}), 500
 
 
 @app.route('/api/select_clone/<clone_id>', methods=['POST'])
 def select_clone_api(clone_id):
     """API endpoint to select a clone for the session."""
-    clone = get_clone_by_id(clone_id)
-    if not clone:
-        return jsonify({"error": "Clone not found"}), 404
+    try:
+        if not get_clone_by_id:
+             logger.error("get_clone_by_id function not available.")
+             return jsonify({"error": "Internal server configuration error (get_clone_by_id)."}), 500
 
-    # Set the active clone ID in the session
-    session['active_clone_id'] = clone_id
-    # Start a new conversation when selecting a clone
-    new_conversation_id = str(uuid.uuid4()) # Store in a variable
-    session['conversation_id'] = new_conversation_id
-    logger.info(f"Selected clone {clone_id} and started new conversation {new_conversation_id}")
+        clone = get_clone_by_id(clone_id)
+        if not clone:
+            return jsonify({"error": "Clone not found"}), 404
 
-    # Return the new conversation ID along with other info
-    return jsonify({
-        "message": f"Clone {clone_id} selected",
-        "clone_name": clone.get('clone_name'),
-        "conversation_id": new_conversation_id # <<< ADD THIS
-    })
+        session['active_clone_id'] = clone_id
+        new_conversation_id = str(uuid.uuid4())
+        session['conversation_id'] = new_conversation_id
+        logger.info(f"Selected clone {clone_id} and started new conversation {new_conversation_id}")
+
+        return jsonify({
+            "message": f"Clone {clone_id} selected",
+            "clone_name": clone.get('clone_name'),
+            "conversation_id": new_conversation_id
+        })
+    except Exception as e:
+        logger.error(f"Error selecting clone {clone_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to select clone."}), 500
 
 
 @app.route('/api/new_chat', methods=['POST'])
 def new_chat_api():
     """API endpoint to start a new chat conversation with the currently selected clone."""
-    if 'active_clone_id' not in session:
-         return jsonify({"error": "No active clone selected"}), 400
+    try:
+        if 'active_clone_id' not in session:
+             return jsonify({"error": "No active clone selected"}), 400
 
-    # Create a new conversation ID and clear history associated with the old one (if any)
-    session['conversation_id'] = str(uuid.uuid4())
-    logger.info(f"Started new conversation {session['conversation_id']} for clone {session['active_clone_id']}")
-    # No history to clear in session as it's loaded dynamically, but good practice
+        new_conversation_id = str(uuid.uuid4())
+        session['conversation_id'] = new_conversation_id
+        logger.info(f"Started new conversation {new_conversation_id} for clone {session['active_clone_id']}")
 
-    return jsonify({"message": "New chat session started", "conversation_id": session['conversation_id']})
+        return jsonify({"message": "New chat session started", "conversation_id": new_conversation_id})
+    except Exception as e:
+        logger.error(f"Error starting new chat: {e}", exc_info=True)
+        return jsonify({"error": "Failed to start new chat."}), 500
+
+
+@app.route('/api/conversation_history/<conversation_id>', methods=['GET'])
+def get_conversation_history_api(conversation_id):
+    """API endpoint to retrieve the history for a specific conversation."""
+    logger.info(f"Request received for conversation history: {conversation_id}")
+    try:
+        if not load_conversation:
+            logger.error("load_conversation function is not available.")
+            return jsonify({"error": "Internal server configuration error (load_conversation)."}), 500
+
+        history = load_conversation(conversation_id)
+        if not isinstance(history, list):
+            logger.warning(f"No valid history found or loaded for conversation {conversation_id}. Returning empty list.")
+            history = [] # Ensure it's always a list
+
+        logger.debug(f"Returning history for conv {conversation_id}: {json.dumps(history, indent=2)}")
+        return jsonify({"conversation_history": history})
+
+    except FileNotFoundError:
+        logger.warning(f"Conversation file not found for ID: {conversation_id}. Returning empty history.")
+        return jsonify({"conversation_history": []}) # Return empty list if file not found
+    except Exception as e:
+        logger.error(f"Error retrieving conversation history for {conversation_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to retrieve conversation history."}), 500
 
 
 @app.route('/api/ask', methods=['POST'])
 def ask_api():
     """API endpoint to handle user questions and generate answers."""
     data = request.json
-    clone_id = data.get('clone_id') # <<< GET CLONE ID FROM REQUEST
+    if not data:
+        return jsonify({"error": "Invalid request data."}), 400
+
+    clone_id = data.get('clone_id')
     if not clone_id:
-        return jsonify({"error": "No clone ID provided"}), 400
+        clone_id = session.get('active_clone_id')
+        if not clone_id:
+            return jsonify({"error": "No clone ID provided or selected in session"}), 400
 
-    active_clone = get_clone_by_id(clone_id) # Use clone_id from request
+    if not get_clone_by_id:
+        logger.error("get_clone_by_id function not available.")
+        return jsonify({"error": "Internal server configuration error (get_clone_by_id)."}), 500
+
+    active_clone = get_clone_by_id(clone_id)
     if not active_clone:
-        return jsonify({"error": "No active clone selected"}), 400
+        if clone_id == session.get('active_clone_id'):
+             session.pop('active_clone_id', None)
+             session.pop('conversation_id', None)
+        return jsonify({"error": "Active clone not found"}), 400
 
-    question = data.get('question')
     question = data.get('question')
     if not question:
         return jsonify({"error": "No question provided"}), 400
 
-    # Ensure conversation ID exists
-    if 'conversation_id' not in session:
-        session['conversation_id'] = str(uuid.uuid4())
-        logger.warning(f"Conversation ID missing, created new one: {session['conversation_id']}")
+    # First try to get conversation_id from the request data
+    conversation_id = data.get('conversation_id')
+    
+    # If not in request, fall back to session
+    if not conversation_id:
+        session_conv_id = session.get('conversation_id')
+        app.logger.info(f"/api/ask: Falling back to session conversation_id: {session_conv_id}")
+        conversation_id = session_conv_id
+        
+    # If still no conversation_id, create a new one
+    if not conversation_id:
+        conversation_id = str(uuid.uuid4())
+        session['conversation_id'] = conversation_id
+        logger.warning(f"Conversation ID missing for clone {clone_id}, created new one: {conversation_id}")
 
-    conversation_id = session['conversation_id']
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     answer = "I'm sorry, I encountered an issue processing your request."
     source = "Error"
     prompt_composition = None
-    full_history = [] # Initialize
+    full_history = []
 
     try:
         logger.info(f"Processing question for clone {active_clone['id']} conv {conversation_id}: {question}")
 
-        # Prepare LangSmith config
         langsmith_api_key = os.getenv("LANGCHAIN_API_KEY")
         langsmith_config = {}
         if langsmith_api_key:
@@ -521,15 +648,21 @@ def ask_api():
                 }
             }
 
-        # Get conversation history
-        memory = ConversationBufferWindowMemory(k=5, conversation_id=conversation_id, return_messages=True) if ConversationBufferWindowMemory else None
-        history_messages = memory.get_memory_variables().get(memory.memory_key, []) if memory else []
-        validated_messages = [msg for msg in history_messages if isinstance(msg, dict) and 'role' in msg and 'content' in msg]
-        conversation_history_str = format_conversation_history(validated_messages) if format_conversation_history else ""
+        history_messages = []
+        conversation_history_str = ""
+        if ConversationBufferWindowMemory and load_conversation and format_conversation_history:
+            try:
+                memory = ConversationBufferWindowMemory(k=5, conversation_id=conversation_id, return_messages=True)
+                memory_vars = memory.get_memory_variables()
+                history_messages = memory_vars.get(memory.memory_key, [])
+                validated_messages = [msg for msg in history_messages if isinstance(msg, dict) and 'role' in msg and 'content' in msg]
+                conversation_history_str = format_conversation_history(validated_messages)
+                logger.info(f"Sending {len(validated_messages)} messages to the LLM")
+            except Exception as mem_e:
+                 logger.error(f"Error retrieving conversation history: {mem_e}", exc_info=True)
+        else:
+             logger.warning("Memory/History functions not available. Proceeding without history.")
 
-        logger.info(f"Sending {len(validated_messages)} messages to the LLM")
-
-        # Call adaptive RAG
         rag_result = {}
         if run_adaptive_rag:
             try:
@@ -542,88 +675,97 @@ def ask_api():
                     persona=active_clone['clone_persona'],
                     vectorstore_name=active_clone.get('vectorstore_name'),
                     conversation_history=conversation_history_str,
-                    history_messages=validated_messages,
+                    history_messages=history_messages,
                     config=langsmith_config
                 )
                 rag_result = final_state if final_state else {}
                 logger.info("Adaptive RAG finished successfully.")
             except Exception as graph_error:
-                logger.error(f"Error during graph execution: {graph_error}\n{traceback.format_exc()}")
-                rag_result = {} # Ensure defined on error
+                logger.error(f"Error during graph execution: {graph_error}", exc_info=True)
+                rag_result = {}
+        else:
+             logger.warning("run_adaptive_rag function not available.")
 
         answer = rag_result.get("generation", "I'm sorry, I encountered an issue processing your request.")
         prompt_composition = rag_result.get("prompt_composition")
-        documents = rag_result.get("documents", [])
         source_path = rag_result.get("source_path")
 
-        # Determine source
         if source_path == "web_search": source = "Web Search (Serper)"
         elif source_path == "base_llm" or source_path == "base_llm_cohere": source = "Base LLM"
         elif source_path == "vectorstore": source = "RAG (Knowledge Base)"
-        elif answer and answer != "I'm sorry, I encountered an issue processing your request.": source = "Base LLM" # Fallback assumption
+        elif answer and answer != "I'm sorry, I encountered an issue processing your request.": source = "Base LLM"
         else: source = "Error"
         if answer == "I'm sorry, I encountered an issue processing your request.": source = "Error"
 
     except Exception as e:
         error_msg = f"Error in /api/ask route: {str(e)}"
-        logger.error(f"{error_msg}\n{traceback.format_exc()}")
-        # Keep default error answer/source
+        logger.error(f"{error_msg}", exc_info=True)
 
-    # Load, update, and save conversation history
-    full_history = load_conversation(conversation_id) if load_conversation else []
-    if not full_history: full_history = [] # Ensure it's a list
+    try:
+        full_history = load_conversation(conversation_id) if load_conversation else []
+        if not isinstance(full_history, list): full_history = []
 
-    full_history.append({'role': 'user', 'content': question, 'timestamp': timestamp})
-    disk_message = {'role': 'assistant', 'content': answer, 'source': source, 'timestamp': timestamp}
-    if prompt_composition: disk_message['prompt_composition'] = prompt_composition
-    full_history.append(disk_message)
+        full_history.append({'role': 'user', 'content': question, 'timestamp': timestamp})
+        disk_message = {'role': 'assistant', 'content': answer, 'source': source, 'timestamp': timestamp}
+        if prompt_composition: disk_message['prompt_composition'] = prompt_composition
+        full_history.append(disk_message)
 
-    if save_conversation: save_conversation(conversation_id, full_history)
+        if save_conversation: save_conversation(conversation_id, full_history)
+    except Exception as hist_e:
+         logger.error(f"Error saving conversation history for {conversation_id}: {hist_e}", exc_info=True)
 
-    # Return only the latest answer and source, plus the full history for the UI to update
+    # Log the history being returned for debugging
+    logger.debug(f"Returning history for conv {conversation_id}: {json.dumps(full_history, indent=2)}")
     return jsonify({
         "answer": answer,
         "source": source,
-        "conversation_history": full_history # Send full history back
+        "conversation_history": full_history
     })
 
 @app.route('/api/session_info', methods=['GET'])
 def get_session_info():
     """API endpoint to get current session details."""
-    active_clone_id = session.get('active_clone_id')
-    conversation_id = session.get('conversation_id')
-    active_clone_data = get_clone_by_id(active_clone_id) if active_clone_id else None
+    try:
+        active_clone_id = session.get('active_clone_id')
+        conversation_id = session.get('conversation_id')
+        active_clone_data = None
+        if active_clone_id and get_clone_by_id:
+             active_clone_data = get_clone_by_id(active_clone_id)
 
-    return jsonify({
-        "active_clone_id": active_clone_id,
-        "conversation_id": conversation_id,
-        "active_clone_name": active_clone_data.get('clone_name') if active_clone_data else None,
-         # Add other relevant clone details if needed by frontend
-        "active_clone_role": active_clone_data.get('clone_role') if active_clone_data else None
-    })
-
+        return jsonify({
+            "active_clone_id": active_clone_id,
+            "conversation_id": conversation_id,
+            "active_clone_name": active_clone_data.get('clone_name') if active_clone_data else None,
+            "active_clone_role": active_clone_data.get('clone_role') if active_clone_data else None
+        })
+    except Exception as e:
+        logger.error(f"Error getting session info: {e}", exc_info=True)
+        return jsonify({"error": "Failed to get session info."}), 500
 
 # Health check endpoint
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({"status": "ok"}), 200
 
-# Add a temporary route to delete all documents
+# Temporary route to delete all documents
 @app.route('/api/delete_all_ragie_documents', methods=['POST'])
-def delete_all_ragie_documents():
+def delete_all_ragie_documents_api():
     """Temporary API endpoint to delete all documents from Ragie."""
     logger.warning("TEMPORARY ROUTE: Deleting all documents from Ragie")
     try:
-        from utils.ragie_utils import delete_clone_documents
-        result = delete_clone_documents(None)  # Call with no clone_id to delete all
-        logger.info(f"Deletion result: {result}")
-        return jsonify({"message": "Attempted to delete all documents", "result": result})
+        if delete_all_documents_ragie:
+            result = delete_all_documents_ragie()
+            logger.info(f"Deletion result: {result}")
+            return jsonify({"message": "Attempted to delete all documents", "result": result})
+        else:
+            logger.error("delete_all_documents_ragie function not available.")
+            return jsonify({"error": "Deletion function not available."}), 500
     except Exception as e:
-        logger.error(f"Error deleting all documents: {str(e)}")
+        logger.error(f"Error deleting all documents: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    # Use waitress or gunicorn for production, Flask dev server is fine for local
-    # For Cloud Run, the entrypoint will be defined in the Dockerfile (e.g., using gunicorn)
     logger.info("Starting Flask development server for backend API.")
-    app.run(debug=True, port=5003, host='0.0.0.0', use_reloader=False) # use_reloader=False is often better for stability inside containers
+    port = int(os.environ.get("PORT", 5003))
+    # Use debug=False and potentially waitress/gunicorn in production
+    app.run(debug=True, port=port, host='0.0.0.0', use_reloader=False)

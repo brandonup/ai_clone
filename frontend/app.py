@@ -18,10 +18,11 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 # Ensure the secret key matches the backend's default if FLASK_SECRET_KEY is not set
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key") 
+app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 # Reverted session cookie settings to Flask defaults
-app.config['SERVER_NAME'] = 'localhost:5002' # Explicitly set server name
+# app.config['SERVER_NAME'] = 'localhost:5002' # Explicitly set server name - REMOVED FOR SIMPLER LOCALHOST COOKIE HANDLING
 app.config['SESSION_COOKIE_DOMAIN'] = None # Explicitly set cookie domain
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax' # Explicitly match backend default
 
 # Get Backend API URL from environment variable
 # This MUST be set when running the frontend service
