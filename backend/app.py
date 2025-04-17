@@ -652,14 +652,19 @@ def ask_api():
         conversation_history_str = ""
         if ConversationBufferWindowMemory and load_conversation and format_conversation_history:
             try:
-                memory = ConversationBufferWindowMemory(k=5, conversation_id=conversation_id, return_messages=True)
+                # Reduce memory window size to limit context length
+                memory = ConversationBufferWindowMemory(k=3, conversation_id=conversation_id, return_messages=True)
                 memory_vars = memory.get_memory_variables()
+                # history_messages should contain BaseMessage objects if return_messages=True
                 history_messages = memory_vars.get(memory.memory_key, [])
-                validated_messages = [msg for msg in history_messages if isinstance(msg, dict) and 'role' in msg and 'content' in msg]
-                conversation_history_str = format_conversation_history(validated_messages)
-                logger.info(f"Sending {len(validated_messages)} messages to the LLM")
+                # Validate message format before formatting (ensure they are BaseMessage or similar)
+                # The validation in adaptive_router.py handles dict/BaseMessage conversion now.
+                conversation_history_str = format_conversation_history(history_messages)
+                logger.info(f"Retrieved {len(history_messages)} messages from memory for conversation {conversation_id}")
             except Exception as mem_e:
-                 logger.error(f"Error retrieving conversation history: {mem_e}", exc_info=True)
+                 logger.error(f"Error retrieving/formatting conversation history: {mem_e}", exc_info=True)
+                 history_messages = [] # Ensure history_messages is an empty list on error
+                 conversation_history_str = "" # Ensure history string is empty on error
         else:
              logger.warning("Memory/History functions not available. Proceeding without history.")
 

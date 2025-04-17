@@ -44,7 +44,9 @@ def enhance_persona(clone_name: str, clone_role: str, original_persona: str) -> 
             convert_system_message_to_human=True # Recommended for some Gemini models
         )
 
-
+        # Ensure the template string uses double braces {{ }} for literal braces if needed,
+        # or correctly escapes single braces if they are not meant for formatting.
+        # In this case, the braces seem correctly used for f-string-like formatting.
         prompt_template_str = """You are an expert prompt engineer tasked with refining a persona description for an AI clone named '{clone_name}', a virtual '{clone_role}'. Your goal is to rewrite the user-provided description into a clear, detailed, and effective system prompt preamble.
 
 Specifically:
@@ -60,11 +62,18 @@ Use precise, specific, and actionable language. Avoid ambiguity and ensure the r
 Initial Description:
 {original_persona}
 
-Rewritten Persona Description:"""
+Rewritten Persona Description:""" # No apparent formatting issues here.
 
-        prompt_template = PromptTemplate.from_template(prompt_template_str)
-
-        chain = prompt_template | model | StrOutputParser()
+        # Check if PromptTemplate.from_template handles the format correctly.
+        # The error logs pointed to issues here, potentially due to Langchain version changes
+        # or unexpected characters in the input variables. Adding a try-except block for robustness.
+        try:
+            prompt_template = PromptTemplate.from_template(prompt_template_str)
+            chain = prompt_template | model | StrOutputParser()
+        except ValueError as e:
+             logger.error(f"Error creating PromptTemplate or Chain in enhance_persona: {e}")
+             logger.error(f"Template string causing error: {prompt_template_str}")
+             return None # Return None if template creation fails
 
         logger.info(f"Enhancing persona for clone: {clone_name}")
         enhanced_persona_text = chain.invoke({

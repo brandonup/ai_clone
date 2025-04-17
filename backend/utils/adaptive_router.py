@@ -15,8 +15,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic.v1 import BaseModel, Field # Use pydantic v1 compatibility namespace as suggested by warning
 from langchain_core.messages import HumanMessage, AIMessage # Added AIMessage
 from langchain_core.output_parsers import StrOutputParser
-# from langchain_qdrant import QdrantVectorStore # Removed QdrantVectorStore import
-# from qdrant_client import QdrantClient # Removed QdrantClient import (global client kept for now)
+# Qdrant imports fully removed
 from langgraph.graph import END, StateGraph, START
 from .ragie_utils import query_ragie # Import the new Ragie query function
 
@@ -28,12 +27,6 @@ COHERE_API_KEY = os.getenv("COHERE_API_KEY")
 RAGIE_API_KEY = os.getenv("RAGIE_API_KEY") # Added Ragie API Key check
 LANGCHAIN_API_KEY = os.getenv("LANGCHAIN_API_KEY")
 SERPER_API_KEY = os.getenv("SERPER_API_KEY") # Re-added Serper Key
-# GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY") # Removed Google API Key
-# GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID") # Removed Google CSE ID
-QDRANT_URL = os.getenv("QDRANT_URL")
-QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-# QDRANT_COLLECTION_NAME = "clone_docs_d7ba27c0-a08b-4462-a732-2e36ffebd6e2" # Removed global default
-
 # Optional LangSmith Tracing
 if LANGCHAIN_API_KEY:
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
@@ -119,23 +112,6 @@ llm = ChatCohere(model="command-r", temperature=0, api_key=COHERE_API_KEY)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 embeddings = OpenAIEmbeddings(model="text-embedding-ada-002", openai_api_key=OPENAI_API_KEY)
 
-# --- Qdrant Client Initialization (Global - Kept for now, but retrieval node will use Ragie) ---
-# Initialize only the client globally, vectorstore/retriever will be per-request
-try:
-    print("--- Initializing Qdrant client globally (Note: Retrieval node now uses Ragie) ---")
-    from qdrant_client import QdrantClient # Import locally if needed
-    qdrant_client = QdrantClient(
-        url=QDRANT_URL,
-        api_key=QDRANT_API_KEY,
-        prefer_grpc=True, # Recommended for performance
-        timeout=30.0,  # Increase timeout to 30 seconds
-    )
-    print("--- Successfully initialized global Qdrant client ---")
-except Exception as e:
-    print(f"!!! ERROR initializing global Qdrant client: {e} !!!")
-    print("Qdrant client initialization failed. RAG functionality might be affected if Qdrant is used elsewhere.")
-    qdrant_client = None # Set client to None if initialization fails
-
 # --- Router Definition ---
 class WebSearchTool(BaseModel): # Renamed for clarity
     """
@@ -199,6 +175,7 @@ question_router = route_prompt | structured_llm_router
 # --- Grader Definitions (Using Prompt Engineering) ---
 
 # Retrieval Grader Prompt
+# Ensure no stray braces or incorrect formatting
 retrieval_grader_prompt_template = """You are a grader assessing relevance of a retrieved document to a user question.
 If the document contains keyword(s) or semantic meaning related to the user question, grade it as relevant.
 It is not necessary that the document contain keywords, just that the semantic meaning is relevant.
@@ -214,6 +191,7 @@ grade_prompt = ChatPromptTemplate.from_template(retrieval_grader_prompt_template
 retrieval_grader = grade_prompt | llm | StrOutputParser()
 
 # Hallucination Grader Prompt
+# Ensure no stray braces or incorrect formatting
 hallucination_grader_prompt_template = """You are a grader assessing whether an LLM generation is grounded in / supported by a set of retrieved facts.
 Check if the generation refers to information that is not present in the provided facts.
 
@@ -228,6 +206,7 @@ hallucination_prompt = ChatPromptTemplate.from_template(hallucination_grader_pro
 hallucination_grader = hallucination_prompt | llm | StrOutputParser()
 
 # Answer Grader Prompt
+# Ensure no stray braces or incorrect formatting
 answer_grader_prompt_template = """You are a grader assessing whether an answer addresses / resolves a question.
 Check if the answer directly addresses the core question asked by the user.
 
@@ -743,7 +722,7 @@ workflow.add_node("web_search", web_search_node)
 workflow.add_node("retrieve", retrieve_node)
 workflow.add_node("grade_documents", grade_documents_node)
 workflow.add_node("generate", generate_node)
-workflow.add_node("base_llm", base_llm_node) # Renamed node
+workflow.add_node("base_llm", base_llm_node)
 
 # Define edges
 workflow.add_conditional_edges(
@@ -751,47 +730,40 @@ workflow.add_conditional_edges(
     route_question_edge,
     {
         "web_search": "web_search",
-        "vectorstore": "retrieve", # Edge name stays the same, points to retrieve_node (now using Ragie)
+        "vectorstore": "retrieve",
         "base_llm": "base_llm",
     },
 )
 
-# After retrieving (from Ragie now), grade the documents
 workflow.add_edge("retrieve", "grade_documents")
 
-# After grading, decide if docs are relevant enough to generate, or fallback to web search
 workflow.add_conditional_edges(
     "grade_documents",
     decide_to_generate_edge,
     {
-        "web_search": "web_search", # If docs were irrelevant, try web search
-        "generate": "generate",   # If docs are relevant, generate answer
+        "web_search": "web_search",
+        "generate": "generate",
     },
 )
 
-# After web search, directly generate (no grading needed for web results in this flow)
-# We assume web search results are generally relevant or the LLM can handle them.
 workflow.add_edge("web_search", "generate")
 
-# After generating, grade the generation
 workflow.add_conditional_edges(
     "generate",
     grade_generation_edge,
     {
-        "useful": END,                       # Generation is good, finish.
-        "retry_generation": "generate",      # Retry generation with same documents.
-        "fallback_to_base_llm": "base_llm",  # NEW: Fallback to base LLM if retries fail.
-        # Keep original fallbacks in case the new state isn't returned (shouldn't happen now)
-        "not useful": "base_llm",            # Fallback to base LLM instead of web_search
-        "not supported": "base_llm",         # Fallback to base LLM instead of web_search
+        "useful": END,
+        "retry_generation": "generate",
+        "fallback_to_base_llm": "base_llm",
+        # Removed older fallback keys as they are covered by fallback_to_base_llm
     },
 )
 
-# Base LLM node directly ends the process
-workflow.add_edge("base_llm", END) # Use renamed node
+workflow.add_edge("base_llm", END)
 
-# Compile the graph
-app = workflow.compile()
+# Compile the graph, explicitly defining the END node if necessary
+# (LangGraph typically handles this, but being explicit can sometimes help with KeyError: '__end__')
+app = workflow.compile(checkpointer=None) # Added checkpointer=None for clarity, can be omitted
 
 # --- Main Function ---
 # Added clone_role and vectorstore_name arguments
@@ -960,44 +932,64 @@ def run_adaptive_rag(question: str, clone_name: str = "AI Clone", clone_role: st
              except Exception as e:
                  print(f"!!! ERROR reconstructing RAG prompt: {e} !!!")
                  message_content = f"Question: {question} \nAnswer: "
-                 
+
              chat_history_list_for_api = []
              if history_messages:
                  for msg in history_messages:
+                     role = None
+                     content = None
                      try:
                          # Handle both dict and Message object formats
                          if isinstance(msg, dict) and "role" in msg and "content" in msg:
                              role = "USER" if msg["role"] == "user" else "CHATBOT"
                              content = msg["content"]
-                         elif hasattr(msg, "content"):
-                             # Handle Message objects
-                             role = "USER" if isinstance(msg, HumanMessage) else "CHATBOT"
+                         elif hasattr(msg, "type") and hasattr(msg, "content"): # Check for Langchain message attributes
+                             role = "USER" if msg.type == "human" else "CHATBOT"
                              content = msg.content
                          else:
                              # Skip invalid message formats
                              print(f"!!! Skipping message with invalid format: {type(msg)} !!!")
                              continue
-                         chat_history_list_for_api.append({"role": role, "message": content})
+
+                         if role and content is not None: # Ensure both role and content were extracted
+                            chat_history_list_for_api.append({"role": role, "message": content})
+                         else:
+                            print(f"!!! Skipping message due to missing role or content: {msg} !!!")
+
                      except Exception as msg_e:
                          print(f"!!! ERROR processing message: {msg_e} !!!")
                          # Skip this message and continue with the rest
                          continue
+
              cohere_docs_format = [{"text": doc.page_content if doc.page_content is not None else ""} for doc in final_documents if isinstance(doc, Document)]
+             # Use the dynamically created preamble for this run
+             current_rag_preamble = get_rag_preamble(clone_name, clone_role, persona, conversation_history)
              api_payload = {
                  "message": message_content,
-                 "preamble": dynamic_rag_preamble, # Use the dynamic preamble
+                 "preamble": current_rag_preamble, # Use the correct preamble variable
                  "chat_history": chat_history_list_for_api,
                  "documents": cohere_docs_format,
                  "model": rag_llm.model_name,
                  "temperature": rag_llm.temperature,
              }
+             # Use json.dumps to serialize the payload for logging/debugging
              final_prompt_composition = f"--- Final Prompt (RAG - Source: {final_source_path}) ---\n{json.dumps(api_payload, indent=2)}"
         else:
              # Fallback if source_path is unexpected
-             final_prompt_composition = f"--- Final Prompt (Unknown Source: {final_source_path}) ---\nQuestion: {question}"
+             # Use the dynamically created fallback preamble for this run
+             current_fallback_preamble = get_fallback_preamble(clone_name, clone_role, persona, conversation_history)
+             # Reconstruct a simplified payload for logging
+             api_payload = {
+                 "message": f"Question: {question} \nAnswer: ",
+                 "preamble": current_fallback_preamble,
+                 "chat_history": chat_history_list_for_api, # Reuse history list
+                 "model": fallback_llm.model_name,
+                 "temperature": fallback_llm.temperature,
+             }
+             final_prompt_composition = f"--- Final Prompt (Unknown/Error Source: {final_source_path}) ---\n{json.dumps(api_payload, indent=2)}"
         # --- End Construct Final Prompt Composition String ---
 
-        print("--- Adaptive RAG Finished ---")
+        print(f"--- Adaptive RAG Finished (Source: {final_source_path}) ---")
     else:
          print("--- Adaptive RAG Finished (No final state found) ---")
 
