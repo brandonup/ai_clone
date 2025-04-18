@@ -250,8 +250,8 @@ def test_adaptive_router():
                 question=query,
                 clone_name=clone_name,
                 clone_role=clone_role,
-                persona=persona,
-                vectorstore_name=clone_id
+                persona=persona
+                # Removed vectorstore_name=clone_id as it's not expected
             )
             
             actual_route = result.get("source_path", "unknown")

@@ -5,10 +5,9 @@ import os
 import logging
 import json
 import re
-import time
-from langchain_ragie import RagieRetriever
+# Removed: from langchain_ragie import RagieRetriever
 from langchain_core.documents import Document
-from ragie import Ragie  # Still needed for document ingestion and deletion
+from ragie import Ragie # Needed for ingestion, deletion, and now retrieval
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -128,15 +127,15 @@ def ingest_document(file_content, filename, clone_name, collection_name=None, de
             logger.error(f"Error ingesting document: {str(e)}")
             raise
 
-def query_ragie(query: str, top_k: int = 5, clone_id: str = None, max_retries: int = 3) -> list:
+def query_ragie(query: str, clone_id: str, top_k: int = 5) -> list:
     """
-    Query Ragie.ai to retrieve relevant documents with improved robustness.
+    Query Ragie.ai using the direct Ragie client to retrieve relevant documents,
+    filtering by the mandatory clone_id metadata.
 
     Args:
         query (str): The user's query.
+        clone_id (str): The mandatory clone ID to filter documents by metadata.
         top_k (int): The maximum number of documents to retrieve.
-        clone_id (str): Optional clone ID to filter documents by.
-        max_retries (int): Maximum number of retry attempts for transient errors.
 
     Returns:
         list: A list of LangChain Document objects.
@@ -156,176 +155,78 @@ def query_ragie(query: str, top_k: int = 5, clone_id: str = None, max_retries: i
         logger.error("RAGIE_API_KEY environment variable not set for querying.")
         return []
 
-    logger.info(f"Querying Ragie.ai: '{query}' (top_k={top_k}, clone_id={clone_id})")
+    logger.info(f"Querying Ragie.ai directly: '{query}' (top_k={top_k}, clone_id={clone_id})")
 
-    # Initialize retry counter
-    retry_count = 0
-    
-    while retry_count <= max_retries:
-        try:
-            # If this is a retry, add exponential backoff
-            if retry_count > 0:
-                backoff_time = 2 ** retry_count  # Exponential backoff: 2, 4, 8... seconds
-                logger.info(f"Retry attempt {retry_count}/{max_retries}, waiting {backoff_time} seconds...")
-                time.sleep(backoff_time)
-            
-            # Try direct Ragie API first
-            with Ragie(auth=ragie_api_key) as r_client:
-                # Verify client has retrievals attribute and retrieve method
-                if not hasattr(r_client, 'retrievals') or not hasattr(r_client.retrievals, 'retrieve'):
-                    logger.warning("Ragie client doesn't have retrievals.retrieve method, falling back to LangChain")
-                    break  # Break out of retry loop and fall back to LangChain
-                
-                logger.info("Using Ragie retrievals.retrieve method")
-                
-                # Try multiple filtering strategies
-                documents = []
-                filter_strategies = []
-                
-                # Strategy 1: Filter by clone_id if provided
-                if clone_id:
-                    filter_strategies.append({
-                        "name": "clone_id direct filter",
-                        "filter": {"clone_id": clone_id}
-                    })
-                
-                # Strategy 2: Filter by metadata.clone_id if clone_id provided
-                if clone_id:
-                    filter_strategies.append({
-                        "name": "metadata.clone_id filter",
-                        "filter": {"metadata.clone_id": clone_id}
-                    })
-                
-                # Strategy 3: Filter by scope=clone_data
-                filter_strategies.append({
-                    "name": "scope filter",
-                    "filter": {"scope": "clone_data"}
-                })
-                
-                # Strategy 4: No filter (fallback)
-                filter_strategies.append({
-                    "name": "no filter",
-                    "filter": None
-                })
-                
-                # Try each filter strategy until we get results
-                for strategy in filter_strategies:
-                    strategy_name = strategy["name"]
-                    filter_value = strategy["filter"]
-                    
-                    # Create retrieval request
-                    retrieval_request = {
-                        "query": query,
-                        "top_k": top_k
-                    }
-                    
-                    # Add filter if specified
-                    if filter_value:
-                        retrieval_request["filter"] = filter_value
-                        logger.info(f"Trying filter strategy: {strategy_name} with filter: {filter_value}")
-                    else:
-                        logger.info(f"Trying filter strategy: {strategy_name} (no filter)")
-                    
-                    try:
-                        # Call retrieve method
-                        retrieval_response = r_client.retrievals.retrieve(request=retrieval_request)
-                        
-                        # Process response
-                        if hasattr(retrieval_response, 'results') and retrieval_response.results:
-                            result_count = len(retrieval_response.results)
-                            logger.info(f"✅ Strategy '{strategy_name}' successful! Retrieved {result_count} documents")
-                            
-                            for result in retrieval_response.results:
-                                # Extract content and metadata
-                                content = getattr(result, 'text', '')
-                                if not content:
-                                    logger.warning(f"Empty content in result, skipping. Result attributes: {dir(result)}")
-                                    continue
-                                
-                                # Build metadata
-                                metadata = {}
-                                
-                                # Add document_id to metadata if available
-                                doc_id = getattr(result, 'id', None)
-                                if doc_id:
-                                    metadata['document_id'] = doc_id
-                                
-                                # Add score to metadata if available
-                                score = getattr(result, 'score', None)
-                                if score:
-                                    metadata['score'] = score
-                                
-                                # Add filter strategy that worked
-                                metadata['filter_strategy'] = strategy_name
-                                metadata['source'] = 'ragie.ai'
-                                
-                                # Create LangChain Document
-                                documents.append(Document(page_content=content, metadata=metadata))
-                            
-                            # If we got results, no need to try other strategies
-                            if documents:
-                                break
-                        else:
-                            logger.info(f"Strategy '{strategy_name}' returned no results")
-                    
-                    except Exception as strategy_e:
-                        logger.warning(f"Error with filter strategy '{strategy_name}': {str(strategy_e)}")
-                        continue  # Try next strategy
-                
-                # If we got documents from any strategy, return them
-                if documents:
-                    logger.info(f"Successfully retrieved {len(documents)} documents from Ragie")
-                    # Log a sample of the first document
-                    if len(documents) > 0:
-                        sample_doc = documents[0]
-                        logger.info(f"Sample document content: {sample_doc.page_content[:100]}...")
-                        logger.info(f"Sample document metadata: {sample_doc.metadata}")
-                    return documents
-                
-                # If we tried all strategies and got no results, log it
-                logger.warning("All filter strategies failed to retrieve documents")
-                
-                # Fall back to LangChain integration
-                logger.info("Falling back to LangChain RagieRetriever")
-                break  # Break out of retry loop to try LangChain
-            
-        except Exception as e:
-            retry_count += 1
-            if retry_count <= max_retries:
-                logger.warning(f"Error querying Ragie (attempt {retry_count}/{max_retries}): {str(e)}")
-            else:
-                logger.error(f"Failed to query Ragie after {max_retries} attempts: {str(e)}")
-                import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                break  # Break out of retry loop to try LangChain
-    
-    # Fall back to LangChain integration
     try:
-        logger.info("Using LangChain RagieRetriever as fallback")
-        retriever = RagieRetriever(
-            api_key=ragie_api_key,
-            top_k=top_k
-        )
-        
-        # Use invoke instead of get_relevant_documents (which is deprecated)
-        documents = retriever.invoke(query)
-        
-        if documents:
-            logger.info(f"Received {len(documents)} results from Ragie via LangChain.")
-            # Log a sample of the first document
-            if len(documents) > 0:
-                sample_doc = documents[0]
-                logger.info(f"Sample document content: {sample_doc.page_content[:100]}...")
-                logger.info(f"Sample document metadata: {sample_doc.metadata}")
-        else:
-            logger.info("No results received from Ragie.")
+        with Ragie(auth=ragie_api_key) as r_client:
+            # Verify client has retrievals attribute and retrieve method
+            if not hasattr(r_client, 'retrievals') or not hasattr(r_client.retrievals, 'retrieve'):
+                logger.error("Ragie client doesn't support retrievals.retrieve method.")
+                return []
             
-        return documents
+            logger.info("Using Ragie retrievals.retrieve method")
+            
+            # Construct the retrieval request
+            retrieval_request = {
+                "query": query,
+                "top_k": top_k
+            }
+            
+            # Add mandatory metadata filter using the provided clone_id
+            # This assumes 'clone_id' was added to metadata during ingestion
+            retrieval_request["filter"] = {"clone_id": clone_id}
+            logger.info(f"Applying mandatory filter: {retrieval_request['filter']}")
 
+            # Call retrieve method
+            retrieval_response = r_client.retrievals.retrieve(request=retrieval_request)
+            
+            documents = []
+            # Process response
+            if hasattr(retrieval_response, 'results') and retrieval_response.results:
+                result_count = len(retrieval_response.results)
+                logger.info(f"Retrieved {result_count} documents from Ragie")
+                
+                for result in retrieval_response.results:
+                    # Extract content and metadata
+                    content = getattr(result, 'text', '')
+                    if not content:
+                        logger.warning(f"Empty content in result, skipping. Result attributes: {dir(result)}")
+                        continue
+                    
+                    # Build metadata
+                    metadata = {}
+                    # Add document_id to metadata if available
+                    doc_id = getattr(result, 'id', None)
+                    if doc_id:
+                        metadata['document_id'] = doc_id
+                    # Add score to metadata if available
+                    score = getattr(result, 'score', None)
+                    if score:
+                        metadata['score'] = score
+                    # Add source
+                    metadata['source'] = 'ragie.ai'
+                    # Add original metadata if available and is a dict
+                    original_metadata = getattr(result, 'metadata', None)
+                    if isinstance(original_metadata, dict):
+                         metadata.update(original_metadata) # Merge original metadata
+
+                    # Create LangChain Document
+                    documents.append(Document(page_content=content, metadata=metadata))
+                
+                # Log a sample of the first document
+                if documents:
+                    sample_doc = documents[0]
+                    logger.info(f"Sample document content: {sample_doc.page_content[:100]}...")
+                    logger.info(f"Sample document metadata: {sample_doc.metadata}")
+            else:
+                logger.info("Ragie retrieval returned no results.")
+                
+            return documents
+            
     except Exception as e:
-        logger.error(f"Error querying Ragie.ai via LangChain: {str(e)}")
+        logger.error(f"Error querying Ragie.ai directly: {str(e)}")
         import traceback
-        traceback.print_exc()
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return []
 
 
@@ -464,120 +365,4 @@ def delete_clone_documents(clone_id):
         logger.error(f"DELETE_DOCS: Error deleting documents for clone {clone_id}: {str(e)}")
         import traceback
         logger.error(f"DELETE_DOCS: Traceback: {traceback.format_exc()}")
-        return {"status": "error", "message": f"Error: {str(e)}"}
-
-def delete_all_documents_ragie():
-    """
-    Deletes all documents from Ragie.ai.
-    
-    Returns:
-        dict: Status of the deletion operation.
-    """
-    ragie_api_key = os.getenv("RAGIE_API_KEY")
-    if not ragie_api_key:
-        logger.error("DELETE_ALL_DOCS: RAGIE_API_KEY environment variable not set")
-        return {"status": "error", "message": "RAGIE_API_KEY not set"}
-    
-    logger.warning("DELETE_ALL_DOCS: Attempting to delete ALL documents from Ragie")
-    
-    try:
-        with Ragie(auth=ragie_api_key) as r_client:
-            # Log all available attributes and methods for debugging
-            logger.info(f"DELETE_ALL_DOCS: Available client attributes: {dir(r_client)}")
-            
-            # Check if we can access the documents collection
-            if not hasattr(r_client, 'documents'):
-                logger.error("DELETE_ALL_DOCS: No documents attribute in Ragie client")
-                return {"status": "error", "message": "No documents attribute in Ragie client"}
-            
-            logger.info(f"DELETE_ALL_DOCS: Available document methods: {dir(r_client.documents)}")
-            
-            # Try to get all documents, handling pagination
-            try:
-                all_document_ids = []
-                page = 1
-                page_size = 100 # Fetch more per page to reduce API calls
-                
-                if not hasattr(r_client.documents, 'list'):
-                    logger.error("DELETE_ALL_DOCS: No list method found in documents")
-                    return {"status": "error", "message": "No list method available in Ragie API"}
-
-                logger.info(f"DELETE_ALL_DOCS: Starting document listing with page_size={page_size}")
-                
-                while True:
-                    logger.info(f"DELETE_ALL_DOCS: Fetching page {page}...")
-                    # Assuming the list method accepts page and page_size parameters
-                    # Adjust parameter names if needed based on Ragie SDK documentation
-                    try:
-                        documents_response = r_client.documents.list(page=page, page_size=page_size)
-                    except TypeError:
-                         # Fallback if page/page_size aren't direct args (might be in a request object)
-                         # This is a guess; consult Ragie SDK docs for the correct way
-                         logger.warning("DELETE_ALL_DOCS: list() might not accept page/page_size directly. Trying request object.")
-                         list_request = {"page": page, "page_size": page_size}
-                         documents_response = r_client.documents.list(request=list_request)
-                         
-                    if not documents_response or not hasattr(documents_response, 'documents') or not documents_response.documents:
-                        logger.info(f"DELETE_ALL_DOCS: No more documents found on page {page} or later.")
-                        break # Exit loop if no documents are returned
-
-                    page_docs = documents_response.documents
-                    logger.info(f"DELETE_ALL_DOCS: Found {len(page_docs)} documents on page {page}")
-                    
-                    for doc in page_docs:
-                        doc_id = getattr(doc, 'id', None)
-                        if doc_id:
-                            all_document_ids.append(doc_id)
-                        else:
-                            logger.warning("DELETE_ALL_DOCS: Document found without an ID on page {page}, skipping.")
-                            
-                    # Check if this was the last page (e.g., if count < page_size)
-                    # The Ragie API might also return pagination info (next_page_token, total_pages, etc.)
-                    # which would be more reliable. Add checks here if available.
-                    if len(page_docs) < page_size:
-                         logger.info("DELETE_ALL_DOCS: Last page reached (document count less than page size).")
-                         break
-
-                    page += 1 # Go to the next page
-
-                logger.info(f"DELETE_ALL_DOCS: Total documents found across all pages: {len(all_document_ids)}")
-
-                if not all_document_ids:
-                    logger.info("DELETE_ALL_DOCS: No documents found in total.")
-                    return {"status": "success", "message": "No documents found", "count": 0}
-
-                # Now delete all collected document IDs
-                deleted_count = 0
-                failed_count = 0
-                
-                if not hasattr(r_client.documents, 'delete'):
-                     logger.error("DELETE_ALL_DOCS: No delete method found in documents")
-                     return {"status": "error", "message": "No delete method available in Ragie API"}
-
-                for doc_id in all_document_ids:
-                    try:
-                        logger.info(f"DELETE_ALL_DOCS: Attempting to delete document {doc_id}")
-                        r_client.documents.delete(id=doc_id)
-                        deleted_count += 1
-                        logger.info(f"DELETE_ALL_DOCS: Successfully deleted document {doc_id}")
-                    except Exception as del_e:
-                        logger.error(f"DELETE_ALL_DOCS: Failed to delete document {doc_id}: {str(del_e)}")
-                        failed_count += 1
-                
-                return {
-                    "status": "success",
-                    "message": f"Attempted deletion. Deleted: {deleted_count}, Failed: {failed_count} out of {len(all_document_ids)} total documents found.",
-                    "deleted_count": deleted_count,
-                    "failed_count": failed_count,
-                    "total_found": len(all_document_ids)
-                }
-
-            except Exception as e:
-                logger.error(f"DELETE_ALL_DOCS: Error processing documents with pagination: {str(e)}")
-                import traceback
-                logger.error(f"DELETE_ALL_DOCS: Traceback: {traceback.format_exc()}")
-                return {"status": "error", "message": f"Error processing documents: {str(e)}"}
-    
-    except Exception as e:
-        logger.error(f"DELETE_ALL_DOCS: Error deleting all documents: {str(e)}")
         return {"status": "error", "message": f"Error: {str(e)}"}

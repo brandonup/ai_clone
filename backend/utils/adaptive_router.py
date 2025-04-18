@@ -4,6 +4,10 @@ import pprint
 import json # Re-added for Serper payload
 from typing import List, Optional, Any
 from typing_extensions import TypedDict
+import logging # Added logging import
+
+# Set up logging for this module
+logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 from langchain.schema import Document
