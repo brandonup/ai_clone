@@ -90,17 +90,6 @@
                             descP.textContent = clone.clone_description;
                             infoDiv.appendChild(descP);
                         }
-                        if (clone.ingestion_status === 'pending') {
-                            const statusP = document.createElement('p');
-                            statusP.className = 'clone-status clone-status-pending';
-                            statusP.textContent = 'Status: Processing knowledge...';
-                            infoDiv.appendChild(statusP);
-                        } else if (clone.ingestion_status === 'error') {
-                            const statusP = document.createElement('p');
-                            statusP.className = 'clone-status clone-status-error';
-                            statusP.textContent = `Status: Ingestion Error (${clone.ingestion_error || 'Unknown error'})`;
-                            infoDiv.appendChild(statusP);
-                        }
 
                         const actionsDiv = document.createElement('div');
                         actionsDiv.className = 'clone-actions';
