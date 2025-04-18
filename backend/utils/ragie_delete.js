@@ -1,3 +1,4 @@
+// This script deletes all documents from the Ragie API with a specific scope. Change the scope as needed.
 // Load environment variables from backend/.env
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 

@@ -230,8 +230,7 @@ def get_rag_preamble(clone_name="AI Clone", clone_role="Assistant", persona="", 
     preamble = f"""=== CLONE PERSONA ===
 You are {clone_name}, a virtual {clone_role}. {persona}. Answer the user's question as their AI clone.
 
-=== CONVERSATION HISTORY ===
-{conversation_history}
+
 
 === INSTRUCTIONS ===
 - Always respond in the tone and style of {clone_name}, with a friendly and professional tone.
@@ -239,8 +238,11 @@ You are {clone_name}, a virtual {clone_role}. {persona}. Answer the user's quest
 - Synthesize the information from the context to provide a comprehensive answer.
 - If the context clearly does not contain information relevant to the question, state that you couldn't find specific information on that topic in the provided context. Do not say this if the context *is* relevant but just doesn't provide a complete answer.
 - Keep answers concise unless more detail is asked, and focus on actionable advice.
-- NEVER mention that you are an AI language model or that you're using any specific information sources."""
+- NEVER mention that you are an AI language model or that you're using any specific information sources.
+
+=== CONVERSATION HISTORY ==="""
     return preamble
+
 
 # LLM instance for RAG (preamble will be bound dynamically)
 rag_llm = ChatCohere(model_name="command-r", temperature=0, api_key=COHERE_API_KEY)
@@ -269,15 +271,16 @@ def get_fallback_preamble(clone_name="AI Clone", clone_role="Assistant", persona
     preamble = f"""=== CLONE PERSONA ===
 You are {clone_name}, a virtual {clone_role}. Answer the user's question as their AI clone.
 
-=== CONVERSATION HISTORY ===
-{conversation_history}
+
 
 === INSTRUCTIONS ===
 - Always respond in the tone and style of {clone_name}, with a friendly and professional tone.
 - Answer the question based upon your knowledge.
 - Keep answers concise unless more detail is asked, and focus on actionable advice.
 - NEVER mention that you are an AI language model or that you're using any specific information sources.
-- Use three sentences maximum and keep the answer concise."""
+- Use three sentences maximum and keep the answer concise.
+
+=== CONVERSATION HISTORY ==="""
     return preamble
 
 # LLM instance for fallback (preamble will be bound dynamically)
@@ -1002,39 +1005,3 @@ def run_adaptive_rag(question: str, clone_name: str = "AI Clone", clone_role: st
         "prompt_composition": final_prompt_composition, # Include in return dict
         "source_path": final_source_path # Return the source path
     }
-
-
-# Example Usage (for testing if run directly)
-if __name__ == "__main__":
-    test_question_web = "What's the latest news about AI regulations?"
-    test_question_rag = "What does Paul Graham say about finding co-founders?"
-    test_question_base_llm = "Hello, how are you?" # Renamed test variable
-
-    print("\nTesting Web Search Route...")
-    # Need a dummy vectorstore name for testing if Qdrant is available
-    test_vectorstore_name = "test_collection_cli"
-    if qdrant_client:
-        # Ensure test collection exists (optional, depends on test setup)
-        try:
-            qdrant_client.create_collection(
-                collection_name=test_vectorstore_name,
-                vectors_config=models.VectorParams(size=EMBEDDING_DIMENSION, distance=models.Distance.COSINE)
-            )
-            print(f"Ensured test collection '{test_vectorstore_name}' exists.")
-        except Exception:
-             print(f"Test collection '{test_vectorstore_name}' likely already exists.")
-    else:
-         test_vectorstore_name = None # Cannot test RAG without client
-
-    result_web = run_adaptive_rag(test_question_web, vectorstore_name=test_vectorstore_name)
-    print(f"\nFinal Answer (Web): {result_web['generation']}")
-    # print(f"Documents (Web): {result_web['documents']}")
-
-    print("\nTesting RAG Route...")
-    result_rag = run_adaptive_rag(test_question_rag, vectorstore_name=test_vectorstore_name)
-    print(f"\nFinal Answer (RAG): {result_rag['generation']}")
-    # print(f"Documents (RAG): {result_rag['documents']}")
-
-    print("\nTesting Base LLM Route...") # Updated print
-    result_base_llm = run_adaptive_rag(test_question_base_llm, vectorstore_name=test_vectorstore_name) # Use renamed variable
-    print(f"\nFinal Answer (Base LLM): {result_base_llm['generation']}") # Updated print

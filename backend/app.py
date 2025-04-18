@@ -113,7 +113,7 @@ try:
     with open(config_path, 'r') as f:
         dev_config = json.load(f)
         dev_clone_name = dev_config.get("clone_name")
-        logger.warning("!!! dev_config.json found. It might influence clones.json on first run. API relies on session['active_clone_id'] !!!")
+        logger.warning("!!! dev_config.json found. It might influence clone data on first run. API relies on session['active_clone_id'] !!!")
         if load_clones:
             clones = load_clones()
             dev_clone_exists = any(c.get("clone_name") == dev_clone_name for c in clones)
@@ -347,7 +347,7 @@ def background_ingestion_task(clone_data: dict):
         if 'files_processed' not in locals(): files_processed = 0
 
     finally:
-        # Update the clone status in clones.json
+        # Update the clone status in Firestore
         try:
             if not load_clones or not save_clones:
                  logger.error(f"Cannot update clone status for {clone_id}: load/save functions unavailable.")
@@ -498,7 +498,7 @@ def delete_clone_api(clone_id):
         else:
              logger.warning(f"DELETE API: No Ragie identifier found for clone {clone_id}. Skipping document deletion.")
 
-        # Delete the clone data from clones.json
+        # Delete the clone data from Firestore
         if delete_clone_data(clone_id):
             logger.info(f"Successfully deleted clone data for {clone_id}")
             if session.get('active_clone_id') == clone_id:
