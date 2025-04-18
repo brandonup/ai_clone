@@ -83,9 +83,9 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="vectorstore_name">Vectorstore Name (Read-Only):</label>
-                    <input type="text" name="vectorstore_name" id="vectorstore_name" readonly>
-                    <small>This is the name of the vectorstore collection used by this clone. This field is read-only.</small>
+                    <label for="clone_id">Clone ID (Read-Only):</label>
+                    <input type="text" name="clone_id" id="clone_id" readonly>
+                    <small>This is the unique identifier for this clone, used internally and for data storage. This field is read-only.</small>
                 </div>
 
                 <!-- Google Drive Import Section -->
@@ -180,7 +180,7 @@
             form.elements['original_persona'].value = cloneData.original_persona || '';
             form.elements['enhanced_persona'].value = cloneData.enhanced_persona || '';
             form.elements['drive_folder'].value = cloneData.drive_folder || '';
-            form.elements['vectorstore_name'].value = cloneData.vectorstore_name || 'Not set';
+            form.elements['clone_id'].value = cloneData.clone_id || 'Not set'; // Renamed from vectorstore_name
         }
 
         // Fetch clone data on page load

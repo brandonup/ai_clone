@@ -1,11 +1,14 @@
 """
-Alternative implementation for document retrieval with keyword-based fallback
+Implementation for document retrieval and management using LangChain's Ragie integration
 """
 import os
 import logging
 import json
 import re
-from ragie import Ragie
+import time
+from langchain_ragie import RagieRetriever
+from langchain_core.documents import Document
+from ragie import Ragie  # Still needed for document ingestion and deletion
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -17,7 +20,7 @@ def ingest_document(file_content, filename, clone_name, collection_name=None, de
     Ingest a document into Ragie.ai
 
     Args:
-        file_content: File content as bytes.
+        file_content: File content as bytes or string.
         filename: Name of the file.
         clone_name: The name of the clone (used for partitioning).
         collection_name: The unique identifier for the clone's data (e.g., 'clone_uuid-...') used for partitioning and metadata.
@@ -125,95 +128,202 @@ def ingest_document(file_content, filename, clone_name, collection_name=None, de
             logger.error(f"Error ingesting document: {str(e)}")
             raise
 
-def query_ragie(query: str, top_k: int = 5, clone_id: str = None) -> list:
+def query_ragie(query: str, top_k: int = 5, clone_id: str = None, max_retries: int = 3) -> list:
     """
-    Query Ragie.ai to retrieve relevant documents.
+    Query Ragie.ai to retrieve relevant documents with improved robustness.
 
     Args:
         query (str): The user's query.
         top_k (int): The maximum number of documents to retrieve.
         clone_id (str): Optional clone ID to filter documents by.
+        max_retries (int): Maximum number of retry attempts for transient errors.
 
     Returns:
         list: A list of LangChain Document objects.
     """
+    # Input validation
+    if not query or not isinstance(query, str):
+        logger.error(f"Invalid query: {query}")
+        return []
+    
+    if not isinstance(top_k, int) or top_k <= 0:
+        logger.warning(f"Invalid top_k value: {top_k}, using default of 5")
+        top_k = 5
+    
+    # Get API key
     ragie_api_key = os.getenv("RAGIE_API_KEY")
     if not ragie_api_key:
         logger.error("RAGIE_API_KEY environment variable not set for querying.")
         return []
 
-    logger.info(f"Querying Ragie.ai with: '{query}' (top_k={top_k})")
+    logger.info(f"Querying Ragie.ai: '{query}' (top_k={top_k}, clone_id={clone_id})")
 
-    try:
-        with Ragie(auth=ragie_api_key) as r_client:
-            # Log available methods for debugging
-            logger.info(f"Available client attributes: {dir(r_client)}")
+    # Initialize retry counter
+    retry_count = 0
+    
+    while retry_count <= max_retries:
+        try:
+            # If this is a retry, add exponential backoff
+            if retry_count > 0:
+                backoff_time = 2 ** retry_count  # Exponential backoff: 2, 4, 8... seconds
+                logger.info(f"Retry attempt {retry_count}/{max_retries}, waiting {backoff_time} seconds...")
+                time.sleep(backoff_time)
             
-            # Check if documents attribute exists
-            if not hasattr(r_client, 'documents'):
-                logger.error("No documents attribute in Ragie client")
-                return []
+            # Try direct Ragie API first
+            with Ragie(auth=ragie_api_key) as r_client:
+                # Verify client has retrievals attribute and retrieve method
+                if not hasattr(r_client, 'retrievals') or not hasattr(r_client.retrievals, 'retrieve'):
+                    logger.warning("Ragie client doesn't have retrievals.retrieve method, falling back to LangChain")
+                    break  # Break out of retry loop and fall back to LangChain
                 
-            logger.info(f"Available document methods: {dir(r_client.documents)}")
-            
-            # Create search request with optional clone_id filter
-            search_request = {
-                "query": query,
-                "top_k": top_k
-            }
-            
-            # Add clone_id filter if provided
-            if clone_id:
-                search_request["filter"] = {"clone_id": clone_id}
-                logger.info(f"Filtering search results by clone_id: {clone_id}")
+                logger.info("Using Ragie retrievals.retrieve method")
                 
-            logger.debug(f"Ragie search request: {search_request}")
-            
-            # Use documents.search instead of search.create
-            if hasattr(r_client.documents, 'search'):
-                response = r_client.documents.search(request=search_request)
-            else:
-                logger.error("No search method found in documents")
-                return []
-
-            # Process the response (assuming response.results is a list of hits)
-            documents = []
-            if hasattr(response, 'results') and response.results:
-                logger.info(f"Received {len(response.results)} results from Ragie.")
-                for result in response.results:
-                    # Extract content and metadata (adjust based on actual Ragie response structure)
-                    content = getattr(result, 'text', '')
-                    metadata = getattr(result, 'metadata', {})
-                    score = getattr(result, 'score', None) # Get score if available
-
-                    # Ensure metadata is a dictionary
-                    if not isinstance(metadata, dict):
-                        metadata = {"source_data": str(metadata)} # Convert non-dict metadata
-
-                    # Add score to metadata if available
-                    if score is not None:
-                        metadata['score'] = score
-                    metadata['source'] = 'ragie.ai' # Indicate the source
-
-                    # Create LangChain Document
-                    if content:
-                        from langchain_core.documents import Document # Local import
-                        # Include document_id in metadata
-                        metadata['document_id'] = getattr(result, 'id', getattr(result, 'document_id', None))
-                        documents.append(Document(page_content=content, metadata=metadata))
+                # Try multiple filtering strategies
+                documents = []
+                filter_strategies = []
+                
+                # Strategy 1: Filter by clone_id if provided
+                if clone_id:
+                    filter_strategies.append({
+                        "name": "clone_id direct filter",
+                        "filter": {"clone_id": clone_id}
+                    })
+                
+                # Strategy 2: Filter by metadata.clone_id if clone_id provided
+                if clone_id:
+                    filter_strategies.append({
+                        "name": "metadata.clone_id filter",
+                        "filter": {"metadata.clone_id": clone_id}
+                    })
+                
+                # Strategy 3: Filter by scope=clone_data
+                filter_strategies.append({
+                    "name": "scope filter",
+                    "filter": {"scope": "clone_data"}
+                })
+                
+                # Strategy 4: No filter (fallback)
+                filter_strategies.append({
+                    "name": "no filter",
+                    "filter": None
+                })
+                
+                # Try each filter strategy until we get results
+                for strategy in filter_strategies:
+                    strategy_name = strategy["name"]
+                    filter_value = strategy["filter"]
+                    
+                    # Create retrieval request
+                    retrieval_request = {
+                        "query": query,
+                        "top_k": top_k
+                    }
+                    
+                    # Add filter if specified
+                    if filter_value:
+                        retrieval_request["filter"] = filter_value
+                        logger.info(f"Trying filter strategy: {strategy_name} with filter: {filter_value}")
                     else:
-                         logger.warning(f"Ragie result skipped due to empty content. Metadata: {metadata}")
-
+                        logger.info(f"Trying filter strategy: {strategy_name} (no filter)")
+                    
+                    try:
+                        # Call retrieve method
+                        retrieval_response = r_client.retrievals.retrieve(request=retrieval_request)
+                        
+                        # Process response
+                        if hasattr(retrieval_response, 'results') and retrieval_response.results:
+                            result_count = len(retrieval_response.results)
+                            logger.info(f"✅ Strategy '{strategy_name}' successful! Retrieved {result_count} documents")
+                            
+                            for result in retrieval_response.results:
+                                # Extract content and metadata
+                                content = getattr(result, 'text', '')
+                                if not content:
+                                    logger.warning(f"Empty content in result, skipping. Result attributes: {dir(result)}")
+                                    continue
+                                
+                                # Build metadata
+                                metadata = {}
+                                
+                                # Add document_id to metadata if available
+                                doc_id = getattr(result, 'id', None)
+                                if doc_id:
+                                    metadata['document_id'] = doc_id
+                                
+                                # Add score to metadata if available
+                                score = getattr(result, 'score', None)
+                                if score:
+                                    metadata['score'] = score
+                                
+                                # Add filter strategy that worked
+                                metadata['filter_strategy'] = strategy_name
+                                metadata['source'] = 'ragie.ai'
+                                
+                                # Create LangChain Document
+                                documents.append(Document(page_content=content, metadata=metadata))
+                            
+                            # If we got results, no need to try other strategies
+                            if documents:
+                                break
+                        else:
+                            logger.info(f"Strategy '{strategy_name}' returned no results")
+                    
+                    except Exception as strategy_e:
+                        logger.warning(f"Error with filter strategy '{strategy_name}': {str(strategy_e)}")
+                        continue  # Try next strategy
+                
+                # If we got documents from any strategy, return them
+                if documents:
+                    logger.info(f"Successfully retrieved {len(documents)} documents from Ragie")
+                    # Log a sample of the first document
+                    if len(documents) > 0:
+                        sample_doc = documents[0]
+                        logger.info(f"Sample document content: {sample_doc.page_content[:100]}...")
+                        logger.info(f"Sample document metadata: {sample_doc.metadata}")
+                    return documents
+                
+                # If we tried all strategies and got no results, log it
+                logger.warning("All filter strategies failed to retrieve documents")
+                
+                # Fall back to LangChain integration
+                logger.info("Falling back to LangChain RagieRetriever")
+                break  # Break out of retry loop to try LangChain
+            
+        except Exception as e:
+            retry_count += 1
+            if retry_count <= max_retries:
+                logger.warning(f"Error querying Ragie (attempt {retry_count}/{max_retries}): {str(e)}")
             else:
-                logger.info("No results received from Ragie.")
+                logger.error(f"Failed to query Ragie after {max_retries} attempts: {str(e)}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                break  # Break out of retry loop to try LangChain
+    
+    # Fall back to LangChain integration
+    try:
+        logger.info("Using LangChain RagieRetriever as fallback")
+        retriever = RagieRetriever(
+            api_key=ragie_api_key,
+            top_k=top_k
+        )
+        
+        # Use invoke instead of get_relevant_documents (which is deprecated)
+        documents = retriever.invoke(query)
+        
+        if documents:
+            logger.info(f"Received {len(documents)} results from Ragie via LangChain.")
+            # Log a sample of the first document
+            if len(documents) > 0:
+                sample_doc = documents[0]
+                logger.info(f"Sample document content: {sample_doc.page_content[:100]}...")
+                logger.info(f"Sample document metadata: {sample_doc.metadata}")
+        else:
+            logger.info("No results received from Ragie.")
+            
+        return documents
 
-            return documents
-
-    except AttributeError:
-        logger.error("The 'ragie' client object might not have a 'search.create' method. Please check the Ragie library documentation for the correct query method.")
-        return []
     except Exception as e:
-        logger.error(f"Error querying Ragie.ai: {str(e)}")
+        logger.error(f"Error querying Ragie.ai via LangChain: {str(e)}")
         import traceback
         traceback.print_exc()
         return []

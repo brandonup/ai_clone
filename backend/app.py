@@ -209,7 +209,7 @@ def create_clone_api():
             "clone_role": role,
             # "coach_name": coach_name, # Removed
             "drive_folder": drive_folder_url,
-            "vectorstore_name": ragie_collection_identifier # Store the identifier
+            "clone_id": ragie_collection_identifier # Store the identifier (Renamed from vectorstore_name)
         }
         logger.debug(f"Prepared new clone data: {new_clone_data}")
 
@@ -270,7 +270,7 @@ def background_ingestion_task(clone_data: dict):
 
     try:
         drive_folder_url = clone_data.get("drive_folder")
-        ragie_collection_identifier = clone_data.get("vectorstore_name") # Contains clone_id part
+        ragie_collection_identifier = clone_data.get("clone_id") # Contains clone_id part (Renamed from vectorstore_name)
         clone_name = clone_data.get("clone_name", "Unknown")
         # coach_name = clone_data.get("coach_name") # Removed
 
@@ -478,7 +478,7 @@ def delete_clone_api(clone_id):
         if not clone:
             return jsonify({"error": "Clone not found"}), 404
 
-        ragie_collection_identifier = clone.get('vectorstore_name')
+        ragie_collection_identifier = clone.get('clone_id') # Renamed from vectorstore_name
         logger.info(f"DELETE API: Found clone {clone_id} with Ragie identifier {ragie_collection_identifier}")
 
         # Delete documents from Ragie.ai
@@ -678,7 +678,7 @@ def ask_api():
                     clone_name=active_clone['clone_name'],
                     clone_role=mapped_role,
                     persona=active_clone['clone_persona'],
-                    vectorstore_name=active_clone.get('vectorstore_name'),
+                    clone_id=active_clone.get('clone_id'), # Renamed from vectorstore_name
                     conversation_history=conversation_history_str,
                     history_messages=history_messages,
                     config=langsmith_config

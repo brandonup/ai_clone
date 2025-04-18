@@ -80,7 +80,7 @@ class GraphState(TypedDict):
         generation_attempts: Counter for tracking generation attempts (for retry logic)
         source_path: Tracks the route taken (vectorstore, web_search, llm_fallback)
         history_messages: List of BaseMessage objects for accurate prompt composition
-        vectorstore_name: The specific Qdrant collection name for the current clone.
+        clone_id: The specific identifier for the current clone (used for Ragie filtering). # Renamed from vectorstore_name
         rag_chain: Dynamically created RAG chain for the current request.
         llm_chain: Dynamically created fallback LLM chain for the current request.
         clone_name: Name of the current clone.
@@ -96,7 +96,7 @@ class GraphState(TypedDict):
     generation_attempts: Optional[int]
     source_path: Optional[str]
     history_messages: Optional[List[Any]]
-    vectorstore_name: Optional[str] # Added for per-clone collection name
+    clone_id: Optional[str] # Renamed from vectorstore_name
     rag_chain: Optional[Any] # To hold the dynamic chain
     llm_chain: Optional[Any] # To hold the dynamic chain
     # Added clone details to state for easier access in nodes if needed
@@ -309,15 +309,15 @@ def retrieve_node(state: GraphState):
         return state
 
     try:
-        # Get the vectorstore_name (clone_id) from the state
-        vectorstore_name = state.get("vectorstore_name")
-        if not vectorstore_name:
-            print("!!! WARNING: No vectorstore_name (clone_id) provided in state. Querying without clone filter. !!!")
+        # Get the clone_id from the state
+        clone_id = state.get("clone_id") # Renamed from vectorstore_name
+        if not clone_id:
+            print("!!! WARNING: No clone_id provided in state. Querying without clone filter. !!!") # Updated log message
         
         # Call the query_ragie function with clone_id
-        print(f"--- Querying Ragie.ai for: '{question}' with clone_id: {vectorstore_name} ---")
-        documents = query_ragie(question, clone_id=vectorstore_name)
-        print(f"--- Retrieved {len(documents)} documents from Ragie.ai for clone: {vectorstore_name} ---")
+        print(f"--- Querying Ragie.ai for: '{question}' with clone_id: {clone_id} ---") # Updated log message
+        documents = query_ragie(question, clone_id=clone_id)
+        print(f"--- Retrieved {len(documents)} documents from Ragie.ai for clone: {clone_id} ---") # Updated log message
 
         # Ensure documents are LangChain Documents (query_ragie should return them, but double-check)
         processed_documents = []
@@ -769,17 +769,17 @@ workflow.add_edge("base_llm", END)
 app = workflow.compile(checkpointer=None) # Added checkpointer=None for clarity, can be omitted
 
 # --- Main Function ---
-# Added clone_role and vectorstore_name arguments
-def run_adaptive_rag(question: str, clone_name: str = "AI Clone", clone_role: str = "Assistant", persona: str = "", vectorstore_name: Optional[str] = None, conversation_history: str = "", history_messages: Optional[List[Any]] = None, config: Optional[dict] = None) -> dict:
+# Renamed vectorstore_name argument to clone_id
+def run_adaptive_rag(question: str, clone_name: str = "AI Clone", clone_role: str = "Assistant", persona: str = "", clone_id: Optional[str] = None, conversation_history: str = "", history_messages: Optional[List[Any]] = None, config: Optional[dict] = None) -> dict:
     """
-    Runs the adaptive RAG graph for a given question, using a specific vectorstore.
+    Runs the adaptive RAG graph for a given question, using a specific clone identifier.
 
     Args:
         question: The user's question.
         clone_name: Name of the clone.
         clone_role: Role/mapped category of the clone.
         persona: Clone persona description.
-        vectorstore_name: The specific Qdrant collection name for this clone.
+        clone_id: The specific identifier for this clone (used for Ragie filtering). # Renamed from vectorstore_name
         conversation_history: The conversation history formatted as a string (for preamble).
         history_messages: The raw list of BaseMessage objects (k=5) for accurate prompt composition.
         config: Optional LangSmith configuration dictionary.
@@ -790,11 +790,11 @@ def run_adaptive_rag(question: str, clone_name: str = "AI Clone", clone_role: st
     if not config:
         config = {} # Default empty config if none provided
 
-    if not vectorstore_name:
-         logger.error("!!! vectorstore_name is required for run_adaptive_rag !!!")
-         # Return an error state immediately if no collection name is provided
+    if not clone_id:
+         logger.error("!!! clone_id is required for run_adaptive_rag !!!") # Updated log message
+         # Return an error state immediately if no clone identifier is provided
          return {
-             "generation": "Configuration error: Missing vector store identifier.",
+             "generation": "Configuration error: Missing clone identifier.", # Updated error message
              "documents": [],
              "prompt_composition": None,
              "source_path": "config_error"
@@ -819,7 +819,7 @@ def run_adaptive_rag(question: str, clone_name: str = "AI Clone", clone_role: st
         "question": question,
         "config": config,
         "history_messages": history_messages or [],
-        "vectorstore_name": vectorstore_name, # Pass the collection name
+        "clone_id": clone_id, # Pass the clone identifier (Renamed from vectorstore_name)
         "rag_chain": dynamic_rag_chain, # Pass the dynamic chain
         "llm_chain": dynamic_llm_chain, # Pass the dynamic chain
         # Pass clone details in case nodes need them (e.g., base_llm_node if called directly)
